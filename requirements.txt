@@ -1,0 +1,31 @@
+# ============================================================
+# Attendance Management System — Python Dependencies
+# ============================================================
+# Install all with:
+#   pip install -r requirements.txt
+#
+# Python 3.8+ required
+# Windows OS (as per project spec)
+# All processing on CPU — no GPU needed
+# ============================================================
+
+# ── Core Vision & Detection ──────────────────────────────────
+opencv-python>=4.8.0         # Live camera feed, frame display, image processing
+ultralytics>=8.0.0           # YOLOv8n — multi-face detection in crowded frames
+mediapipe>=0.10.0            # Face landmark detection for alignment/normalization
+
+# ── Machine Learning ─────────────────────────────────────────
+tensorflow>=2.12.0           # Loading and running the converted Keras model
+tensorflowjs>=4.0.0          # One-time conversion: model.json → model.h5
+
+# ── Image & Array Processing ─────────────────────────────────
+numpy>=1.23.0                # Array operations, image preprocessing
+Pillow>=9.0.0                # Image resizing, format conversion
+
+# ── Built-in (no install needed) ─────────────────────────────
+# sqlite3    — database operations (stdlib)
+# os         — file/path operations (stdlib)
+# pathlib    — modern path handling (stdlib)
+# datetime   — date/time for records and filenames (stdlib)
+# json       — reading metadata.json (stdlib)
+# logging    — system logging (stdlib)

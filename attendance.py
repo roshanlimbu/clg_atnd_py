@@ -1,130 +1,310 @@
-import cv2
-import sqlite3
-import numpy as np
-import datetime
-from ultralytics import YOLO
-from insightface.app import FaceAnalysis
+"""
+========================================================
+attendance.py — Attendance Recording Orchestrator
+========================================================
+STEP 11 + STEP 12 + STEP 13 + STEP 15
 
-YOLO_MODEL_PATH = "yolov8n-face.pt"
-COOLDOWN_MINUTES = 5
+Coordinates the full attendance pipeline for each recognized face:
 
-def cosine_similarity(a, b):
-    # Calculate cosine similarity between two 1D vectors
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+1. Layer 1 check — memory file (fast, survives restarts)
+2. Layer 2 insert — SQLite database (with UNIQUE constraint)
+3. Memory update  — write to today's file immediately after DB insert
+4. Name lookup    — resolve person_id to display name from DB
+5. Visual status  — determine color/label for live feed overlay
+========================================================
+"""
 
-def load_known_users():
-    conn = sqlite3.connect('attendance.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, name, embedding FROM users")
-    users = []
-    for row in cursor.fetchall():
-        user_id, name, emb_blob = row
-        # Reconstruct numpy array from bytes
-        emb = np.frombuffer(emb_blob, dtype=np.float32) 
-        users.append({
-            'id': user_id,
-            'name': name,
-            'embedding': emb
-        })
-    conn.close()
-    return users
+import logging
+from datetime import date, datetime
+from pathlib import Path
+from typing import List, Optional, Dict, Tuple
 
-def log_attendance(user_id):
-    conn = sqlite3.connect('attendance.db')
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO attendance (user_id) VALUES (?)", (user_id,))
-    conn.commit()
-    conn.close()
+from database import DatabaseManager
+from memory import MemoryManager
+from recognizer import RecognitionResult
+from detector import DetectedFace
 
-def get_face_embedding(app, face_crop):
-    face_img = cv2.resize(face_crop, (112, 112))
-    rec_model = app.models.get('recognition')
-    if rec_model:
-        emb = rec_model.get_feat(face_img)
-        return np.array(emb).flatten()
-    return None
+logger = logging.getLogger(__name__)
 
-def main():
-    print("Loading users from database...")
-    known_users = load_known_users()
-    print(f"Loaded {len(known_users)} users.")
 
-    print("Loading YOLO face model...")
-    yolo_model = YOLO(YOLO_MODEL_PATH)
+# Status constants for visual overlay
+STATUS_MARKED          = "marked"          # Successfully marked (green)
+STATUS_ALREADY_MARKED  = "already_marked"  # Already done today (yellow)
+STATUS_UNKNOWN         = "unknown"         # Unknown face (red)
+STATUS_LOW_CONFIDENCE  = "low_confidence"  # Below threshold (gray)
 
-    print("Loading InsightFace recognition model...")
-    app = FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider'])
-    app.prepare(ctx_id=0, det_size=(640, 640))
 
-    last_logged = {} # {user_id: datetime_object}
+class AttendanceResult:
+    """Result of processing one detected face through the attendance pipeline."""
 
-    cap = cv2.VideoCapture(0)
-    print("Attendance tracking started. Press 'q' to quit.")
+    def __init__(
+        self,
+        person_id: str,
+        name: str,
+        confidence: float,
+        status: str,
+    ):
+        self.person_id = person_id
+        self.name = name
+        self.confidence = confidence
+        self.status = status
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("Failed to read from camera.")
-            break
+    def as_dict(self) -> dict:
+        """Convert to dict for use with detector.draw_detections()."""
+        return {
+            "person_id": self.person_id,
+            "name": self.name,
+            "confidence": self.confidence,
+            "status": self.status,
+        }
 
-        results = yolo_model(frame, verbose=False)
-        boxes = results[0].boxes.xyxy.cpu().numpy()
+    def __repr__(self):
+        return (
+            f"AttendanceResult("
+            f"person_id={self.person_id!r}, "
+            f"name={self.name!r}, "
+            f"confidence={self.confidence:.2%}, "
+            f"status={self.status!r})"
+        )
 
-        display_frame = frame.copy()
 
-        for box in boxes:
-            x1, y1, x2, y2 = map(int, box[:4])
-            
-            # Expand box slightly
-            h, w = frame.shape[:2]
-            bw, bh = x2 - x1, y2 - y1
-            cx1 = max(0, int(x1 - bw * 0.1))
-            cy1 = max(0, int(y1 - bh * 0.1))
-            cx2 = min(w, int(x2 + bw * 0.1))
-            cy2 = min(h, int(y2 + bh * 0.1))
+class AttendanceRecorder:
+    """
+    STEP 11 + 12 + 13 + 15 — Orchestrates the full attendance pipeline.
 
-            face_crop = frame[cy1:cy2, cx1:cx2]
-            
-            label = "Unknown"
-            color = (0, 0, 255) # Red for unknown
-            
-            if face_crop.size > 0:
-                emb = get_face_embedding(app, face_crop)
-                if emb is not None:
-                    # Find best match
-                    best_match = None
-                    best_score = -1
-                    
-                    for user in known_users:
-                        score = cosine_similarity(emb, user['embedding'])
-                        if score > best_score:
-                            best_score = score
-                            best_match = user
-                    
-                    # Threshold for recognition (0.4 is a good starting point for cosine sim with ArcFace)
-                    if best_score > 0.4: 
-                        label = f"{best_match['name']} ({best_score:.2f})"
-                        color = (0, 255, 0) # Green for recognized
-                        
-                        user_id = best_match['id']
-                        now = datetime.datetime.now()
-                        
-                        # Check cooldown
-                        if user_id not in last_logged or (now - last_logged[user_id]).total_seconds() > COOLDOWN_MINUTES * 60:
-                            log_attendance(user_id)
-                            last_logged[user_id] = now
-                            print(f"Logged attendance for {best_match['name']} at {now.strftime('%H:%M:%S')}")
-            
-            cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(display_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+    Takes recognition results and coordinates:
+        - Duplicate checking (Layer 1: memory file)
+        - Database recording (Layer 2: UNIQUE constraint backup)
+        - Memory file updating
+        - Name resolution from database
+        - Midnight rollover for multi-day continuous operation
+    """
 
-        cv2.imshow('Attendance System', display_frame)
+    def __init__(self, db_manager: DatabaseManager, memory_manager: MemoryManager):
+        """
+        Args:
+            db_manager    : Initialized DatabaseManager instance
+            memory_manager: Initialized MemoryManager instance
+        """
+        self.db = db_manager
+        self.memory = memory_manager
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+        # Cache of person_id → name from database (reduces DB queries)
+        self._name_cache: Dict[str, str] = {}
 
-    cap.release()
-    cv2.destroyAllWindows()
+        # Session statistics
+        self._session_marked_count: int = 0
+        self._session_duplicate_count: int = 0
+        self._session_unknown_count: int = 0
 
-if __name__ == "__main__":
-    main()
+        # Pre-load name cache
+        self._refresh_name_cache()
+
+        logger.info("AttendanceRecorder initialized.")
+
+    def _refresh_name_cache(self):
+        """Load all registered persons into a local name cache."""
+        persons = self.db.get_all_persons()
+        for person in persons:
+            self._name_cache[person["person_id"]] = person["name"]
+        logger.debug(f"Name cache loaded: {len(self._name_cache)} persons")
+
+    def _resolve_name(self, person_id: str) -> str:
+        """
+        Look up display name for a person_id.
+        First checks in-memory cache, then falls back to DB.
+
+        Args:
+            person_id: Person's unique ID
+
+        Returns:
+            Display name, or the person_id itself if not found
+        """
+        if person_id in self._name_cache:
+            return self._name_cache[person_id]
+
+        # Not in cache — try database
+        person = self.db.get_person(person_id)
+        if person:
+            name = person["name"]
+            self._name_cache[person_id] = name
+            return name
+
+        # Not in database either — return person_id as fallback
+        logger.warning(
+            f"Person '{person_id}' not found in database. "
+            "Add them to the persons table or retrain your model."
+        )
+        return person_id
+
+    def process_recognition(
+        self, recognition: RecognitionResult
+    ) -> AttendanceResult:
+        """
+        STEPS 11 + 12 + 13 — Process a single face recognition result.
+
+        Pipeline:
+        1. Unknown/low confidence → return immediately with appropriate status
+        2. Layer 1 check (memory file) → already marked? return already_marked
+        3. Layer 2 insert (database) → insert with UNIQUE constraint
+        4. Memory update → write to today's file immediately
+        5. Return status for visual overlay
+
+        Args:
+            recognition: RecognitionResult from FaceRecognizer
+
+        Returns:
+            AttendanceResult with final status for display
+        """
+        # ── Handle Unknown / Low Confidence ──────────────────────────────
+        if recognition.is_unknown:
+            self._session_unknown_count += 1
+            return AttendanceResult(
+                person_id="Unknown",
+                name="Unknown",
+                confidence=recognition.confidence,
+                status=STATUS_UNKNOWN,
+            )
+
+        if not recognition.is_above_threshold:
+            return AttendanceResult(
+                person_id=recognition.person_id,
+                name=self._resolve_name(recognition.person_id),
+                confidence=recognition.confidence,
+                status=STATUS_LOW_CONFIDENCE,
+            )
+
+        person_id = recognition.person_id
+        name = self._resolve_name(person_id)
+        confidence = recognition.confidence
+
+        # ── STEP 11 — Layer 1 Duplicate Check (Memory File) ──────────────
+        if self.memory.is_marked_today(person_id):
+            self._session_duplicate_count += 1
+            logger.debug(
+                f"Layer 1 duplicate blocked: {person_id} ({name}) "
+                "— already in today's memory file"
+            )
+            return AttendanceResult(
+                person_id=person_id,
+                name=name,
+                confidence=confidence,
+                status=STATUS_ALREADY_MARKED,
+            )
+
+        # ── STEP 12 — Record in SQLite Database ──────────────────────────
+        now = datetime.now()
+        db_success = self.db.record_attendance(
+            person_id=person_id,
+            name=name,
+            confidence=confidence,
+            attendance_date=now.date(),
+            attendance_time=now,
+        )
+
+        if not db_success:
+            # Layer 2 caught a duplicate (edge case)
+            logger.info(
+                f"Layer 2 duplicate blocked: {person_id} ({name}) "
+                "— UNIQUE constraint in database"
+            )
+            # Still update memory file to sync with DB state
+            self.memory.mark_person(person_id)
+            return AttendanceResult(
+                person_id=person_id,
+                name=name,
+                confidence=confidence,
+                status=STATUS_ALREADY_MARKED,
+            )
+
+        # ── STEP 13 — Update Memory File ─────────────────────────────────
+        self.memory.mark_person(person_id)
+        self._session_marked_count += 1
+
+        logger.info(
+            f"✅ MARKED: {person_id} ({name}) | "
+            f"confidence={confidence:.2%} | "
+            f"time={now.strftime('%H:%M:%S')}"
+        )
+
+        return AttendanceResult(
+            person_id=person_id,
+            name=name,
+            confidence=confidence,
+            status=STATUS_MARKED,
+        )
+
+    def process_frame_recognitions(
+        self,
+        recognitions: List[RecognitionResult],
+    ) -> List[AttendanceResult]:
+        """
+        Process all recognition results from a single frame.
+
+        Args:
+            recognitions: List of RecognitionResult objects (one per detected face)
+
+        Returns:
+            List of AttendanceResult objects (same order as input)
+        """
+        # STEP 15 — Check for midnight rollover before processing each frame
+        date_changed = self.memory.check_and_refresh_date()
+        if date_changed:
+            logger.info(
+                "New day detected during frame processing. "
+                "Attendance memory reset. All persons can be marked again."
+            )
+
+        results = []
+        for recognition in recognitions:
+            result = self.process_recognition(recognition)
+            results.append(result)
+
+        return results
+
+    def get_session_stats(self) -> dict:
+        """Return statistics for this program session."""
+        memory_status = self.memory.get_status_summary()
+        db_stats = self.db.get_statistics()
+
+        return {
+            # Session (since last restart)
+            "session_marked": self._session_marked_count,
+            "session_duplicates_blocked": self._session_duplicate_count,
+            "session_unknowns": self._session_unknown_count,
+
+            # Today (all-time today, from DB)
+            "today_total": db_stats["today_count"],
+            "today_date": memory_status["today"],
+
+            # All-time
+            "all_time_records": db_stats["all_time_records"] if "all_time_records" in db_stats else db_stats.get("all_time_count", 0),
+            "registered_persons": db_stats["total_persons"],
+        }
+
+    def print_session_summary(self):
+        """Print a formatted summary of today's attendance to the log."""
+        stats = self.get_session_stats()
+        records = self.db.get_today_attendance()
+
+        logger.info("=" * 55)
+        logger.info(f"  ATTENDANCE SUMMARY — {stats['today_date']}")
+        logger.info("=" * 55)
+        logger.info(f"  Total marked today   : {stats['today_total']}")
+        logger.info(f"  Registered persons   : {stats['registered_persons']}")
+        logger.info(f"  Session marked       : {stats['session_marked']}")
+        logger.info(f"  Duplicates blocked   : {stats['session_duplicates_blocked']}")
+        logger.info(f"  Unknown faces seen   : {stats['session_unknowns']}")
+        logger.info("-" * 55)
+
+        if records:
+            logger.info("  Attendance log:")
+            for rec in records:
+                logger.info(
+                    f"    {rec['time']}  {rec['person_id']:<12}  "
+                    f"{rec['name']:<25}  {rec['confidence']:.0%}"
+                )
+        else:
+            logger.info("  No attendance records yet today.")
+
+        logger.info("=" * 55)
