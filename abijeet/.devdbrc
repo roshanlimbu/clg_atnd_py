@@ -1,0 +1,10 @@
+[
+  {
+    "type": "sqlite",
+    "path": "/Users/limburoshan/Code/college/atnd_py/abijeet/attendance.db"
+  },
+  {
+    "type": "sqlite",
+    "path": "/Users/limburoshan/Code/college/atnd_py/attendance.db"
+  }
+]

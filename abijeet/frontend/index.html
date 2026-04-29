@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Attendance Dashboard</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>Attendance Dashboard</h1>
+          <p id="sync-label">Syncing with local database...</p>
+        </div>
+        <div class="sync">
+          <span id="sync-dot" class="dot pending"></span>
+          <span id="sync-status">Connecting</span>
+        </div>
+      </header>
+
+      <section class="metrics" aria-label="Attendance metrics">
+        <article class="metric">
+          <span class="metric-label">Attendance Count</span>
+          <strong id="total-count">0</strong>
+        </article>
+        <article class="metric">
+          <span class="metric-label">Active Faces</span>
+          <strong id="active-faces">0</strong>
+        </article>
+        <article class="metric">
+          <span class="metric-label">Unique Faces</span>
+          <strong id="unique-faces">0</strong>
+        </article>
+        <article class="metric">
+          <span class="metric-label">Next Sync</span>
+          <strong id="next-sync">10s</strong>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Live Faces</h2>
+            <span id="active-window">Recent rows</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Face ID</th>
+                  <th>Count</th>
+                  <th>First Seen</th>
+                  <th>Last Seen</th>
+                  <th>Confidence</th>
+                </tr>
+              </thead>
+              <tbody id="faces-body">
+                <tr>
+                  <td colspan="5" class="empty">No face records yet.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <aside class="panel side-panel">
+          <div class="panel-head">
+            <h2>Client Samples</h2>
+            <span id="sample-count">0 samples</span>
+          </div>
+          <ol id="sample-list" class="sample-list"></ol>
+        </aside>
+      </section>
+    </main>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

@@ -4,7 +4,7 @@
 # Install all with:
 #   pip install -r requirements.txt
 #
-# Python 3.8+ required
+# Python 3.8-3.12 required. TensorFlow/MediaPipe do not support Python 3.14.
 # Windows OS (as per project spec)
 # All processing on CPU — no GPU needed
 # ============================================================
@@ -17,6 +17,10 @@ mediapipe>=0.10.0            # Face landmark detection for alignment/normalizati
 # ── Machine Learning ─────────────────────────────────────────
 tensorflow>=2.12.0           # Loading and running the converted Keras model
 tensorflowjs>=4.0.0          # One-time conversion: model.json → model.h5
+
+# ── Face Recognition (deep embedding) ────────────────────────
+face-recognition>=1.3.0      # dlib ResNet-34 128-d face embeddings (replaces DCT hash)
+                             # Requires cmake: brew install cmake
 
 # ── Image & Array Processing ─────────────────────────────────
 numpy>=1.23.0                # Array operations, image preprocessing

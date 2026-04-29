@@ -22,6 +22,15 @@ import json
 from pathlib import Path
 
 
+def check_python_version():
+    """Ensure a Python version supported by TensorFlow/TensorFlow.js is used."""
+    major, minor = sys.version_info[:2]
+    if major > 3 or (major == 3 and minor >= 13):
+        print(f"\n[ERROR] Python {major}.{minor} is too new for TensorFlow/TensorFlow.js.")
+        print("        Use Python 3.12 for this project.")
+        sys.exit(1)
+
+
 def check_dependencies():
     """Verify all required packages are installed before conversion."""
     missing = []
@@ -104,12 +113,17 @@ def validate_converted_model(h5_path: Path, labels: list):
     Validation step — load the converted .h5 model and run a dummy inference
     to confirm the model works correctly before the main program uses it.
     """
+    try:
+        import tf_keras
+    except ImportError:
+        tf_keras = None
     import tensorflow as tf
     import numpy as np
 
     print("\n[INFO] Validating converted model with a dummy inference...")
 
-    model = tf.keras.models.load_model(str(h5_path))
+    loader = tf_keras.models if tf_keras is not None else tf.keras.models
+    model = loader.load_model(str(h5_path))
 
     # Teachable Machine models expect input shape (1, 224, 224, 3)
     dummy_input = np.zeros((1, 224, 224, 3), dtype=np.float32)
@@ -160,6 +174,7 @@ def main():
     output_dir = base_dir / "converted_model"
 
     # Pre-flight checks
+    check_python_version()
     check_dependencies()
     verify_source_model(models_dir)
 

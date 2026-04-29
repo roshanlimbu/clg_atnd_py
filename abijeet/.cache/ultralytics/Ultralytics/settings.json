@@ -1,0 +1,21 @@
+{
+  "settings_version": "0.0.6",
+  "datasets_dir": "/Users/limburoshan/Code/college/datasets",
+  "weights_dir": "/Users/limburoshan/Code/college/atnd_py/weights",
+  "runs_dir": "/Users/limburoshan/Code/college/atnd_py/runs",
+  "uuid": "617de2a4fa704dba7965c2076d09feed49b1c6f3252eca86c3483e6a8e09aa31",
+  "sync": true,
+  "api_key": "",
+  "openai_api_key": "",
+  "clearml": true,
+  "comet": true,
+  "dvc": true,
+  "hub": true,
+  "mlflow": true,
+  "neptune": true,
+  "raytune": true,
+  "tensorboard": false,
+  "wandb": false,
+  "vscode_msg": true,
+  "openvino_msg": true
+}

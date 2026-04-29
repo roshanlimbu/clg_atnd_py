@@ -12,19 +12,16 @@ Usage:
 What it does:
     - Creates all required directories
     - Checks all package installations
-    - Creates attendance.db with persons + attendance tables
-    - Adds the UNIQUE constraint for duplicate prevention
-    - Inserts a sample person record for testing
+    - Creates attendance.db with generated face IDs + attendance counts
+    - Adds the UNIQUE constraint for one row per face per day
 ========================================================
 """
 
 import os
 import sys
-import json
 import sqlite3
 import subprocess
 from pathlib import Path
-from datetime import date
 
 
 # ── Required packages ────────────────────────────────────────────────────────
@@ -51,10 +48,14 @@ IMPORT_MAP = {
 
 
 def check_python_version():
-    """Ensure Python 3.8+ is being used."""
+    """Ensure a Python version supported by the ML dependencies is being used."""
     major, minor = sys.version_info[:2]
     if major < 3 or (major == 3 and minor < 8):
         print(f"[ERROR] Python 3.8+ required. You have {major}.{minor}")
+        sys.exit(1)
+    if major > 3 or (major == 3 and minor >= 13):
+        print(f"[ERROR] Python {major}.{minor} is too new for TensorFlow/MediaPipe.")
+        print("        Use Python 3.12 for this project.")
         sys.exit(1)
     print(f"[OK] Python {major}.{minor} — version compatible.")
 
@@ -103,9 +104,8 @@ def initialize_database(base_dir: Path):
     STEP 4 — Create SQLite attendance.db with all required tables.
 
     Tables:
-        persons    — stores registered people (ID, name, registration date)
-        attendance — stores daily attendance records with UNIQUE(person_id, date)
-                     The UNIQUE constraint is Layer 2 duplicate prevention.
+        persons    — stores registered unique IDs
+        attendance — stores daily attendance counts with UNIQUE(person_id, date)
     """
     db_path = base_dir / "attendance.db"
     print(f"\n[INFO] Initializing database at: {db_path}")
@@ -120,7 +120,7 @@ def initialize_database(base_dir: Path):
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS persons (
             person_id       TEXT PRIMARY KEY,
-            name            TEXT NOT NULL,
+            face_signature  TEXT,
             registered_date DATE NOT NULL DEFAULT (DATE('now'))
         );
     """)
@@ -131,9 +131,10 @@ def initialize_database(base_dir: Path):
         CREATE TABLE IF NOT EXISTS attendance (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             person_id   TEXT    NOT NULL,
-            name        TEXT    NOT NULL,
             date        DATE    NOT NULL,
-            time        TIME    NOT NULL,
+            first_seen  TIME    NOT NULL,
+            last_seen   TIME    NOT NULL,
+            count       INTEGER NOT NULL DEFAULT 1,
             confidence  REAL,
             UNIQUE(person_id, date),
             FOREIGN KEY (person_id) REFERENCES persons(person_id)
@@ -155,6 +156,7 @@ def initialize_database(base_dir: Path):
     print("  [OK] Index on attendance(person_id, date) created.")
 
     conn.commit()
+    migrate_database_schema(conn)
 
     # ── Verify schema ──────────────────────────────────────────────────────
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
@@ -166,43 +168,119 @@ def initialize_database(base_dir: Path):
     return db_path
 
 
-def add_sample_persons(db_path: Path):
-    """
-    Insert sample/placeholder persons into the persons table.
-    Replace these with your actual registered student IDs and names.
-    The class labels in Teachable Machine metadata.json must match person_id exactly.
-    """
-    sample_persons = [
-        # (person_id,  name)
-        # person_id must EXACTLY match the class label in your Teachable Machine model
-        ("Unknown",    "Unknown Person"),   # Required — handles unrecognized faces
-        # Add your actual registered persons below:
-        # ("STU001", "Alice Johnson"),
-        # ("STU002", "Bob Smith"),
-        # ("STU003", "Carol Davis"),
-    ]
+def migrate_database_schema(conn: sqlite3.Connection):
+    """Migrate old schemas to generated-face-ID attendance counts."""
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(persons)")
+    person_columns = {row["name"] for row in cursor.fetchall()}
 
-    print("\n[INFO] Inserting sample persons into database...")
+    cursor.execute("PRAGMA table_info(attendance)")
+    attendance_columns = {row["name"] for row in cursor.fetchall()}
+
+    needs_migration = (
+        "name" in person_columns
+        or "face_signature" not in person_columns
+        or "first_seen" not in attendance_columns
+        or "last_seen" not in attendance_columns
+        or "count" not in attendance_columns
+    )
+    if not needs_migration:
+        return
+
+    print("  [MIGRATE] Updating database for generated face IDs and counts.")
+    cursor.execute("PRAGMA foreign_keys=OFF;")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS persons_new (
+            person_id       TEXT PRIMARY KEY,
+            face_signature  TEXT,
+            registered_date DATE NOT NULL DEFAULT (DATE('now'))
+        );
+    """)
+    if "face_signature" in person_columns:
+        cursor.execute("""
+            INSERT OR IGNORE INTO persons_new
+                (person_id, face_signature, registered_date)
+            SELECT person_id, face_signature, registered_date FROM persons;
+        """)
+    else:
+        cursor.execute("""
+            INSERT OR IGNORE INTO persons_new (person_id, registered_date)
+            SELECT person_id, registered_date FROM persons;
+        """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS attendance_new (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            person_id   TEXT    NOT NULL,
+            date        DATE    NOT NULL,
+            first_seen  TIME    NOT NULL,
+            last_seen   TIME    NOT NULL,
+            count       INTEGER NOT NULL DEFAULT 1,
+            confidence  REAL,
+            UNIQUE(person_id, date),
+            FOREIGN KEY (person_id) REFERENCES persons(person_id)
+        );
+    """)
+    if "first_seen" in attendance_columns:
+        cursor.execute("""
+            INSERT OR IGNORE INTO attendance_new
+                (id, person_id, date, first_seen, last_seen, count, confidence)
+            SELECT
+                id,
+                person_id,
+                date,
+                first_seen,
+                last_seen,
+                COALESCE(count, 1),
+                confidence
+            FROM attendance;
+        """)
+    else:
+        cursor.execute("""
+            INSERT OR IGNORE INTO attendance_new
+                (id, person_id, date, first_seen, last_seen, count, confidence)
+            SELECT id, person_id, date, time, time, 1, confidence FROM attendance;
+        """)
+    cursor.execute("DROP TABLE attendance;")
+    cursor.execute("DROP TABLE persons;")
+    cursor.execute("ALTER TABLE persons_new RENAME TO persons;")
+    cursor.execute("ALTER TABLE attendance_new RENAME TO attendance;")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(date);")
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_attendance_person_date
+        ON attendance(person_id, date);
+    """)
+    cursor.execute("PRAGMA foreign_keys=ON;")
+    conn.commit()
+
+
+def prune_placeholder_persons(db_path: Path):
+    """Remove old fixed-label placeholder rows from the classifier flow."""
+    print("\n[INFO] Pruning old fixed-label placeholder IDs...")
     conn = sqlite3.connect(str(db_path))
     cursor = conn.cursor()
-
-    for person_id, name in sample_persons:
-        cursor.execute("""
-            INSERT OR IGNORE INTO persons (person_id, name, registered_date)
-            VALUES (?, ?, DATE('now'))
-        """, (person_id, name))
-        if cursor.rowcount > 0:
-            print(f"  [OK] Inserted: {person_id} — {name}")
-        else:
-            print(f"  [SKIP] Already exists: {person_id} — {name}")
-
+    cursor.execute("""
+        DELETE FROM attendance
+        WHERE person_id IN (
+            SELECT person_id FROM persons WHERE face_signature IS NULL
+        )
+    """)
+    removed_attendance = cursor.rowcount
+    cursor.execute("""
+        DELETE FROM persons
+        WHERE face_signature IS NULL
+    """)
+    print(
+        f"  [OK] Removed {cursor.rowcount} placeholder IDs "
+        f"and {removed_attendance} legacy attendance rows"
+    )
     conn.commit()
     conn.close()
 
 
 def verify_model_files(base_dir: Path):
-    """Check if Teachable Machine model files are present."""
-    print("\n[INFO] Checking Teachable Machine model files...")
+    """Check legacy Teachable Machine files, if you still use conversion tools."""
+    print("\n[INFO] Checking optional Teachable Machine model files...")
     models_dir = base_dir / "models"
     required = ["model.json", "weights.bin", "metadata.json"]
     all_present = True
@@ -213,12 +291,11 @@ def verify_model_files(base_dir: Path):
             size_kb = path.stat().st_size / 1024
             print(f"  [OK] {f} ({size_kb:.1f} KB)")
         else:
-            print(f"  [MISSING] {f} — place this file in models/ directory")
+            print(f"  [MISSING] {f} — only needed for convert_model.py")
             all_present = False
 
     if not all_present:
-        print("\n[WARNING] Some model files are missing.")
-        print("          Export your Teachable Machine model and place files in models/")
+        print("\n[INFO] Model files are optional for generated face IDs.")
     else:
         # Check if already converted
         h5_path = base_dir / "converted_model" / "model.h5"
@@ -237,12 +314,11 @@ def print_project_summary(base_dir: Path):
     print("""
   Directory structure:
   ├── models/
-  │   ├── model.json          ← Teachable Machine export
-  │   ├── weights.bin         ← Teachable Machine export
-  │   └── metadata.json       ← Teachable Machine export
+  │   ├── model.json          ← Optional Teachable Machine export
+  │   ├── weights.bin         ← Optional Teachable Machine export
+  │   └── metadata.json       ← Optional Teachable Machine export
   ├── attendance_memory/      ← Daily memory text files (auto-created)
-  ├── converted_model/
-  │   └── model.h5            ← Generated by convert_model.py
+  ├── converted_model/        ← Optional legacy classifier output
   ├── logs/                   ← Runtime logs
   ├── attendance.db           ← SQLite database ✓
   ├── convert_model.py        ← Step 2: run once
@@ -250,16 +326,15 @@ def print_project_summary(base_dir: Path):
   ├── database.py             ← DB helpers
   ├── memory.py               ← Memory file helpers
   ├── detector.py             ← Face detection (YOLO + MediaPipe)
-  ├── recognizer.py           ← Face recognition (Keras model)
+  ├── face_identity.py        ← Generated face ID matching
+  ├── recognizer.py           ← Optional legacy classifier
   ├── camera.py               ← Camera feed handler
   ├── attendance.py           ← Attendance recording logic
   └── main.py                 ← Main entry point
 
   NEXT STEPS:
-  1. Place Teachable Machine model files in models/
-  2. Run: python convert_model.py
-  3. Add your registered persons to persons table in attendance.db
-  4. Run: python main.py
+  1. Grant camera permission to your terminal app
+  2. Run: python main.py
 """)
 
 
@@ -275,7 +350,7 @@ def main():
     install_packages()
 
     db_path = initialize_database(base_dir)
-    add_sample_persons(db_path)
+    prune_placeholder_persons(db_path)
     verify_model_files(base_dir)
     print_project_summary(base_dir)
 

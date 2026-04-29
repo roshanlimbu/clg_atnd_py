@@ -5,9 +5,7 @@ main.py — Attendance Management System Entry Point
 STEPS 5–15 (Full Program Loop)
 
 This is the main program. Run this after:
-    1. ✅ Teachable Machine model trained and exported to models/
-    2. ✅ python convert_model.py  (converts model.json → model.h5)
-    3. ✅ python setup.py          (creates DB, installs packages)
+    1. ✅ python setup.py          (creates DB, installs packages)
 
 Usage:
     python main.py
@@ -16,10 +14,9 @@ Controls:
     Q / ESC → Quit the program
 
 What happens:
-    - Loads converted Keras model
     - Connects to camera
     - Continuously reads live frames
-    - Every 5th frame: detects faces → recognizes → marks attendance
+    - Every 5th frame: detects faces → assigns generated IDs → counts attendance
     - Displays live feed with color-coded overlays at all times
     - Runs continuously for days (handles midnight rollover automatically)
 ========================================================
@@ -32,9 +29,6 @@ import logging
 import traceback
 from pathlib import Path
 from datetime import datetime
-
-import cv2
-import numpy as np
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -57,9 +51,6 @@ CAMERA_INDEX    = 0       # 0 = default device camera
 SAMPLE_EVERY    = 5       # Process every 5th frame
 DISPLAY_WIDTH   = 1280
 DISPLAY_HEIGHT  = 720
-
-# Recognition settings
-CONFIDENCE_THRESHOLD = 0.85  # 85% — adjust if getting too many false/missed
 
 # Display settings
 SHOW_FPS        = True
@@ -107,9 +98,17 @@ def pre_flight_checks(logger):
     logger.info("Running pre-flight checks...")
     passed = True
 
+    major, minor = sys.version_info[:2]
+    if major > 3 or (major == 3 and minor >= 13):
+        logger.error(
+            "Python %s.%s is too new for TensorFlow/MediaPipe. "
+            "Use Python 3.12 for this project.",
+            major,
+            minor,
+        )
+        passed = False
+
     checks = [
-        (CONVERTED_MODEL, "Converted model — run python convert_model.py"),
-        (METADATA_FILE,   "Teachable Machine metadata.json in models/"),
         (DATABASE_FILE,   "SQLite database — run python setup.py"),
     ]
 
@@ -179,21 +178,17 @@ def main():
     # Memory manager (loads today's file / creates fresh one)
     from memory import MemoryManager
     memory = MemoryManager(MEMORY_DIR)
-    logger.info(
-        f"✅ Memory loaded — "
-        f"{memory.get_marked_count()} persons already marked today"
-    )
+    logger.info("✅ Daily memory loaded")
 
     # Face detector (YOLOv8n + MediaPipe)
     from detector import FaceDetector
     detector = FaceDetector()
-    logger.info("✅ Face detector ready (YOLOv8n + MediaPipe)")
+    logger.info("✅ Face detector ready")
 
-    # Face recognizer (Keras model)
-    from recognizer import FaceRecognizer
-    recognizer = FaceRecognizer(CONVERTED_MODEL, METADATA_FILE)
-    recognizer.set_confidence_threshold(CONFIDENCE_THRESHOLD)
-    logger.info(f"✅ Face recognizer ready (threshold={CONFIDENCE_THRESHOLD:.0%})")
+    # Face identity manager (generated IDs; no fixed trained labels)
+    from face_identity import FaceIdentityManager
+    identity_manager = FaceIdentityManager(db)
+    logger.info("✅ Face identity manager ready")
 
     # Attendance recorder
     from attendance import AttendanceRecorder
@@ -235,10 +230,9 @@ def main():
                 detected_faces = detector.detect_faces(frame)
 
                 if detected_faces:
-                    # ── STEP 10 — Face recognition (Keras model) ─────────
-                    # Use batch inference for efficiency with multiple faces
+                    # ── STEP 10 — Generated face identity matching ───────
                     face_images = [f.aligned_image for f in detected_faces]
-                    recognitions = recognizer.recognize_batch(face_images)
+                    recognitions = identity_manager.identify_batch(face_images)
 
                     # ── STEPS 11+12+13 — Attendance recording ────────────
                     attendance_results = recorder.process_frame_recognitions(
@@ -252,8 +246,8 @@ def main():
                     for result in attendance_results:
                         if result.status == "marked":
                             logger.info(
-                                f"🎯 NEW: {result.person_id} ({result.name}) "
-                                f"— {result.confidence:.1%} confidence"
+                                f"🎯 COUNTED: {result.person_id} "
+                                f"— count={result.count}"
                             )
                 else:
                     last_detected_faces = []
@@ -272,7 +266,7 @@ def main():
             if SHOW_STATUS_BAR:
                 annotated_frame = camera.draw_status_bar(
                     annotated_frame,
-                    marked_count=memory.get_marked_count(),
+                    marked_count=db.get_attendance_count_today(),
                     fps=fps_tracker.fps,
                     processing_frame=should_process,
                 )

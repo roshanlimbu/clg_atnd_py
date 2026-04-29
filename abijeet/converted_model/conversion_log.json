@@ -1,0 +1,10 @@
+{
+  "converted_at": "2026-04-28T09:52:21.743369",
+  "source_model": "models/model.json",
+  "output_model": "converted_model/model.h5",
+  "classes": [
+    "abijeet",
+    "bishnu"
+  ],
+  "num_classes": 2
+}

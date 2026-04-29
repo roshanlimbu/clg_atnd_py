@@ -22,6 +22,7 @@ Stage 2 — MediaPipe Face Alignment:
 """
 
 import cv2
+import os
 import logging
 import numpy as np
 from pathlib import Path
@@ -66,18 +67,32 @@ class FaceDetector:
     MODEL_INPUT_SIZE = (224, 224)
 
     # Minimum face size to process (pixels) — filters out tiny far-away faces
-    MIN_FACE_SIZE = 30
+    MIN_FACE_SIZE = 60
+
+    # OpenCV Haar is only a fallback. The embedding stage now rejects unusable
+    # crops, so favor recall here instead of requiring perfect Haar detections.
+    OPENCV_MIN_NEIGHBORS = 5
+    MIN_SKIN_RATIO = 0.08
 
     # Padding around detected face before alignment (fraction of face size)
     FACE_PADDING = 0.2
 
+    # This environment's MediaPipe package exposes only the newer tasks API,
+    # not mp.solutions.face_mesh. Keep alignment off unless that API is present.
+    ENABLE_MEDIAPIPE_ALIGNMENT = False
+
     def __init__(self):
         """Load YOLOv8n and MediaPipe models."""
         self._yolo_model = None
+        self._face_recognition = None
+        self._opencv_face_cascade = None
+        self._opencv_eye_cascade = None
         self._mp_face_mesh = None
         self._mp_drawing = None
+        self._cache_dir = Path(__file__).parent / ".cache"
 
         self._load_yolo()
+        self._load_face_recognition_detector()
         self._load_mediapipe()
 
     def _load_yolo(self):
@@ -85,28 +100,54 @@ class FaceDetector:
         STEP 8 — Load YOLOv8n face detection model.
 
         Uses the 'yolov8n-face' variant (nano size, face-specific weights).
-        If face-specific weights aren't available, falls back to yolov8n
-        with class 0 (person) detection.
+        If face-specific weights aren't available, falls back to OpenCV's
+        face cascade. Do not use general yolov8n.pt here: that model detects
+        arbitrary objects and creates false attendance entries.
 
         First run: ultralytics auto-downloads the model weights.
         """
+        yolo_cache_dir = self._cache_dir / "ultralytics"
+        yolo_cache_dir.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault("YOLO_CONFIG_DIR", str(yolo_cache_dir))
+
         try:
             from ultralytics import YOLO
-
-            # Try face-specific model first, fall back to general nano
-            try:
-                self._yolo_model = YOLO("yolov8n-face.pt")
-                logger.info("YOLOv8n-face model loaded (face-specific weights)")
-            except Exception:
-                self._yolo_model = YOLO("yolov8n.pt")
-                logger.info("YOLOv8n model loaded (general weights — using person class)")
-
         except Exception as e:
-            logger.error(f"Failed to load YOLO model: {e}")
+            logger.warning(f"Ultralytics not available, using OpenCV face detector: {e}")
+            self._load_opencv_face_detector()
+            return
+
+        try:
+            self._yolo_model = YOLO("yolov8n-face.pt")
+            logger.info("YOLOv8n-face model loaded (face-specific weights)")
+            return
+        except Exception as e:
+            logger.warning(f"Could not load yolov8n-face.pt: {e}")
+            logger.info("Using OpenCV face detector fallback")
+            self._load_opencv_face_detector()
+
+    def _load_face_recognition_detector(self):
+        """Load dlib HOG face detector via face_recognition as a recall fallback."""
+        try:
+            import face_recognition as fr
+            self._face_recognition = fr
+            logger.info("dlib HOG face detector loaded via face_recognition")
+        except Exception as e:
+            logger.warning("face_recognition detector unavailable: %s", e)
+            self._face_recognition = None
+
+    def _load_opencv_face_detector(self):
+        """Load OpenCV's bundled Haar face cascade as an offline fallback."""
+        cascade_path = Path(cv2.data.haarcascades) / "haarcascade_frontalface_alt2.xml"
+        eye_cascade_path = Path(cv2.data.haarcascades) / "haarcascade_eye_tree_eyeglasses.xml"
+        self._opencv_face_cascade = cv2.CascadeClassifier(str(cascade_path))
+        self._opencv_eye_cascade = cv2.CascadeClassifier(str(eye_cascade_path))
+        if self._opencv_face_cascade.empty() or self._opencv_eye_cascade.empty():
             raise RuntimeError(
-                "Could not load YOLOv8n model. "
-                "Run: pip install ultralytics"
-            ) from e
+                "Could not load YOLO or OpenCV Haar face/eye detector. "
+                "Install ultralytics or check your OpenCV installation."
+            )
+        logger.info("OpenCV Haar face detector loaded with validation filters")
 
     def _load_mediapipe(self):
         """
@@ -115,8 +156,26 @@ class FaceDetector:
         Face Mesh detects 468 facial landmarks (eyes, nose, mouth corners, etc.)
         Used to compute the face's rotation angle and straighten it.
         """
+        if not self.ENABLE_MEDIAPIPE_ALIGNMENT:
+            logger.info("MediaPipe alignment disabled; using direct face crops")
+            self._mp_face_mesh = None
+            return
+
+        matplotlib_cache_dir = self._cache_dir / "matplotlib"
+        matplotlib_cache_dir.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_cache_dir))
+
         try:
             import mediapipe as mp
+
+            if not hasattr(mp, "solutions"):
+                logger.warning(
+                    "MediaPipe %s does not expose mp.solutions; "
+                    "continuing without landmark alignment",
+                    getattr(mp, "__version__", "unknown"),
+                )
+                self._mp_face_mesh = None
+                return
 
             self._mp_face_mesh = mp.solutions.face_mesh.FaceMesh(
                 static_image_mode=True,     # Each crop is treated as a static image
@@ -129,11 +188,12 @@ class FaceDetector:
             logger.info("MediaPipe FaceMesh initialized")
 
         except Exception as e:
-            logger.error(f"Failed to initialize MediaPipe: {e}")
-            raise RuntimeError(
-                "Could not initialize MediaPipe. "
-                "Run: pip install mediapipe"
-            ) from e
+            logger.warning(
+                "Failed to initialize MediaPipe alignment; "
+                "continuing with direct face crops: %s",
+                e,
+            )
+            self._mp_face_mesh = None
 
     def detect_faces(self, frame: np.ndarray) -> List[DetectedFace]:
         """
@@ -149,8 +209,14 @@ class FaceDetector:
         if frame is None or frame.size == 0:
             return []
 
-        # Stage 1: YOLOv8n — detect all face bounding boxes in one pass
-        bounding_boxes = self._run_yolo_detection(frame)
+        # Stage 1: detect all face bounding boxes. Use every available
+        # detector, then merge overlaps. This keeps recall high when the
+        # face-specific YOLO weights are unavailable.
+        bounding_boxes = []
+        bounding_boxes.extend(self._run_yolo_detection(frame))
+        bounding_boxes.extend(self._run_dlib_detection(frame))
+        bounding_boxes.extend(self._run_opencv_detection(frame))
+        bounding_boxes = self._merge_overlapping_boxes(bounding_boxes)
 
         if not bounding_boxes:
             return []
@@ -168,7 +234,7 @@ class FaceDetector:
 
         logger.debug(
             f"Detected {len(detected_faces)} faces "
-            f"(from {len(bounding_boxes)} YOLO detections)"
+            f"(from {len(bounding_boxes)} merged detections)"
         )
         return detected_faces
 
@@ -184,6 +250,9 @@ class FaceDetector:
         Returns:
             List of ((x1, y1, x2, y2), confidence) tuples
         """
+        if self._yolo_model is None:
+            return []
+
         try:
             results = self._yolo_model(
                 frame,
@@ -221,6 +290,149 @@ class FaceDetector:
                 bboxes.append(((x1, y1, x2, y2), confidence))
 
         return bboxes
+
+    def _run_dlib_detection(
+        self, frame: np.ndarray
+    ) -> List[Tuple[Tuple[int, int, int, int], float]]:
+        """Run dlib's HOG face detector through face_recognition."""
+        if self._face_recognition is None:
+            return []
+
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        try:
+            locations = self._face_recognition.face_locations(
+                rgb,
+                number_of_times_to_upsample=1,
+                model="hog",
+            )
+        except Exception as e:
+            logger.debug("dlib face detection failed: %s", e)
+            return []
+
+        h, w = frame.shape[:2]
+        bboxes = []
+        for top, right, bottom, left in locations:
+            x1 = max(0, int(left))
+            y1 = max(0, int(top))
+            x2 = min(w, int(right))
+            y2 = min(h, int(bottom))
+            if x2 - x1 < self.MIN_FACE_SIZE or y2 - y1 < self.MIN_FACE_SIZE:
+                continue
+            bboxes.append(((x1, y1, x2, y2), 0.95))
+
+        return bboxes
+
+    def _run_opencv_detection(
+        self, frame: np.ndarray
+    ) -> List[Tuple[Tuple[int, int, int, int], float]]:
+        """Run the OpenCV Haar fallback detector."""
+        if self._opencv_face_cascade is None:
+            return []
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.equalizeHist(gray)
+        faces = self._opencv_face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.08,
+            minNeighbors=self.OPENCV_MIN_NEIGHBORS,
+            minSize=(self.MIN_FACE_SIZE, self.MIN_FACE_SIZE),
+            flags=cv2.CASCADE_SCALE_IMAGE,
+        )
+
+        bboxes = []
+        for x, y, w, h in faces:
+            bbox = (int(x), int(y), int(x + w), int(y + h))
+            if self._is_valid_opencv_face(frame, gray, bbox):
+                bboxes.append((bbox, 1.0))
+
+        return bboxes
+
+    def _is_valid_opencv_face(
+        self,
+        frame: np.ndarray,
+        gray: np.ndarray,
+        bbox: Tuple[int, int, int, int],
+    ) -> bool:
+        """Reject common Haar false positives before they reach attendance."""
+        x1, y1, x2, y2 = bbox
+        width = x2 - x1
+        height = y2 - y1
+        if width <= 0 or height <= 0:
+            return False
+
+        aspect_ratio = width / height
+        if aspect_ratio < 0.55 or aspect_ratio > 1.35:
+            return False
+
+        face_gray = gray[y1:y2, x1:x2]
+        face_bgr = frame[y1:y2, x1:x2]
+        if face_gray.size == 0 or face_bgr.size == 0:
+            return False
+
+        upper_half = face_gray[: max(1, height // 2), :]
+        min_eye_size = max(10, int(min(width, height) * 0.12))
+        eyes = self._opencv_eye_cascade.detectMultiScale(
+            upper_half,
+            scaleFactor=1.08,
+            minNeighbors=4,
+            minSize=(min_eye_size, min_eye_size),
+            flags=cv2.CASCADE_SCALE_IMAGE,
+        )
+        skin_ok = self._skin_ratio(face_bgr) >= self.MIN_SKIN_RATIO
+        return skin_ok or len(eyes) >= 1
+
+    def _merge_overlapping_boxes(
+        self,
+        boxes: List[Tuple[Tuple[int, int, int, int], float]],
+        iou_threshold: float = 0.35,
+    ) -> List[Tuple[Tuple[int, int, int, int], float]]:
+        """Merge duplicate detections from YOLO, dlib, and OpenCV."""
+        if not boxes:
+            return []
+
+        sorted_boxes = sorted(boxes, key=lambda item: item[1], reverse=True)
+        merged: List[Tuple[Tuple[int, int, int, int], float]] = []
+        for bbox, confidence in sorted_boxes:
+            if any(self._iou(bbox, existing_bbox) > iou_threshold for existing_bbox, _ in merged):
+                continue
+            merged.append((bbox, confidence))
+
+        return sorted(merged, key=lambda item: item[0][0])
+
+    @staticmethod
+    def _iou(
+        a: Tuple[int, int, int, int],
+        b: Tuple[int, int, int, int],
+    ) -> float:
+        """Intersection-over-union for two xyxy boxes."""
+        ax1, ay1, ax2, ay2 = a
+        bx1, by1, bx2, by2 = b
+        inter_x1 = max(ax1, bx1)
+        inter_y1 = max(ay1, by1)
+        inter_x2 = min(ax2, bx2)
+        inter_y2 = min(ay2, by2)
+        inter_w = max(0, inter_x2 - inter_x1)
+        inter_h = max(0, inter_y2 - inter_y1)
+        inter_area = inter_w * inter_h
+        if inter_area == 0:
+            return 0.0
+
+        area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+        area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
+        union = area_a + area_b - inter_area
+        if union <= 0:
+            return 0.0
+        return inter_area / union
+
+    def _skin_ratio(self, face_bgr: np.ndarray) -> float:
+        """Estimate whether a crop contains enough skin-like pixels."""
+        ycrcb = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2YCrCb)
+        _, cr, cb = cv2.split(ycrcb)
+        skin_mask = (
+            (cr >= 133) & (cr <= 180) &
+            (cb >= 70) & (cb <= 135)
+        )
+        return float(np.count_nonzero(skin_mask)) / float(skin_mask.size)
 
     def _align_face(
         self, frame: np.ndarray, bbox: Tuple[int, int, int, int]
@@ -263,6 +475,9 @@ class FaceDetector:
 
         # Convert BGR → RGB for MediaPipe
         face_rgb = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
+
+        if self._mp_face_mesh is None:
+            return self._direct_resize(face_rgb)
 
         # Run MediaPipe landmark detection
         try:
@@ -344,7 +559,7 @@ class FaceDetector:
             frame             : Original BGR frame from camera
             detected_faces    : List of DetectedFace objects
             recognition_results: Optional list of dicts with recognition data
-                                 Keys: person_id, name, confidence, status
+                                 Keys: person_id, confidence, status
                                  status: 'marked' | 'already_marked' | 'unknown' | 'low_confidence'
 
         Returns:
@@ -361,8 +576,8 @@ class FaceDetector:
         }
 
         LABEL_MAP = {
-            "marked":           "Marked Present",
-            "already_marked":   "Already Marked",
+            "marked":           "Counted",
+            "already_marked":   "Debounced",
             "unknown":          "Unknown",
             "low_confidence":   "Low Confidence",
         }
@@ -384,14 +599,15 @@ class FaceDetector:
 
             # Build label text
             if result:
-                name = result.get("name", "?")
+                person_id = result.get("person_id", "?")
                 conf = result.get("confidence", 0.0)
+                count = result.get("count", 0)
                 status_label = LABEL_MAP.get(status, status)
 
                 if status in ("unknown", "low_confidence"):
                     label = f"{status_label} ({conf:.0%})"
                 else:
-                    label = f"{name} | {status_label} ({conf:.0%})"
+                    label = f"{person_id} | {status_label} #{count}"
             else:
                 label = "Processing..."
 
