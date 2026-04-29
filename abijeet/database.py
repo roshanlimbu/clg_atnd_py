@@ -120,10 +120,14 @@ class DatabaseManager:
             CREATE TABLE IF NOT EXISTS persons (
                 person_id       TEXT PRIMARY KEY,
                 face_signature  TEXT,
+                display_name    TEXT,
+                role            TEXT NOT NULL DEFAULT 'guest',
+                reference_photo_path TEXT,
                 registered_date DATE NOT NULL DEFAULT (DATE('now'))
             );
             """
         )
+        self._ensure_person_metadata_columns(conn)
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS attendance (
@@ -170,7 +174,25 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_attendance_photos_person_date "
             "ON attendance_photos(person_id, date);"
         )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_persons_role ON persons(role);"
+        )
         conn.commit()
+
+    def _ensure_person_metadata_columns(self, conn: sqlite3.Connection):
+        """Add internal-team metadata columns to older persons tables."""
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(persons)")
+        columns = {row["name"] for row in cursor.fetchall()}
+
+        if "display_name" not in columns:
+            cursor.execute("ALTER TABLE persons ADD COLUMN display_name TEXT;")
+        if "role" not in columns:
+            cursor.execute(
+                "ALTER TABLE persons ADD COLUMN role TEXT NOT NULL DEFAULT 'guest';"
+            )
+        if "reference_photo_path" not in columns:
+            cursor.execute("ALTER TABLE persons ADD COLUMN reference_photo_path TEXT;")
 
     def _migrate_schema(self, conn: sqlite3.Connection):
         """Migrate older schemas to generated-face-ID attendance storage."""
@@ -204,23 +226,40 @@ class DatabaseManager:
             CREATE TABLE IF NOT EXISTS persons_new (
                 person_id       TEXT PRIMARY KEY,
                 face_signature  TEXT,
+                display_name    TEXT,
+                role            TEXT NOT NULL DEFAULT 'guest',
+                reference_photo_path TEXT,
                 registered_date DATE NOT NULL DEFAULT (DATE('now'))
             );
             """
         )
         if "face_signature" in person_columns:
+            if "display_name" in person_columns and "name" in person_columns:
+                display_expr = "COALESCE(display_name, name)"
+            elif "display_name" in person_columns:
+                display_expr = "display_name"
+            elif "name" in person_columns:
+                display_expr = "name"
+            else:
+                display_expr = "NULL"
+            role_expr = "role" if "role" in person_columns else "'guest'"
+            photo_expr = (
+                "reference_photo_path"
+                if "reference_photo_path" in person_columns
+                else "NULL"
+            )
             cursor.execute(
-                """
+                f"""
                 INSERT OR IGNORE INTO persons_new
-                    (person_id, face_signature, registered_date)
-                SELECT person_id, face_signature, registered_date FROM persons;
+                    (person_id, face_signature, display_name, role, reference_photo_path, registered_date)
+                SELECT person_id, face_signature, {display_expr}, {role_expr}, {photo_expr}, registered_date FROM persons;
                 """
             )
         else:
             cursor.execute(
                 """
-                INSERT OR IGNORE INTO persons_new (person_id, registered_date)
-                SELECT person_id, registered_date FROM persons;
+                INSERT OR IGNORE INTO persons_new (person_id, display_name, role, registered_date)
+                SELECT person_id, NULL, 'guest', registered_date FROM persons;
                 """
             )
 
@@ -275,6 +314,7 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_attendance_person_date "
             "ON attendance(person_id, date);"
         )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_persons_role ON persons(role);")
         cursor.execute("PRAGMA foreign_keys=ON;")
         conn.commit()
 
@@ -465,7 +505,7 @@ class DatabaseManager:
                 cursor.execute(
                     """
                     SELECT a.id, a.person_id, a.date, a.first_seen, a.last_seen,
-                           a.count, a.confidence,
+                           a.count, a.confidence, p.display_name, p.role,
                            (
                                SELECT ap.image_path
                                FROM attendance_photos AS ap
@@ -477,6 +517,7 @@ class DatabaseManager:
                     FROM attendance AS a
                     JOIN persons AS p ON p.person_id = a.person_id
                     WHERE a.date = ? AND p.face_signature IS NOT NULL
+                      AND COALESCE(p.role, 'guest') != 'internal'
                     ORDER BY a.first_seen ASC
                     """,
                     (today_str,)
@@ -502,7 +543,7 @@ class DatabaseManager:
                 cursor.execute(
                     """
                     SELECT a.id, a.person_id, a.date, a.first_seen, a.last_seen,
-                           a.count, a.confidence,
+                           a.count, a.confidence, p.display_name, p.role,
                            (
                                SELECT ap.image_path
                                FROM attendance_photos AS ap
@@ -514,6 +555,7 @@ class DatabaseManager:
                     FROM attendance AS a
                     JOIN persons AS p ON p.person_id = a.person_id
                     WHERE a.date = ? AND p.face_signature IS NOT NULL
+                      AND COALESCE(p.role, 'guest') != 'internal'
                     ORDER BY a.first_seen ASC
                     """,
                     (query_date.isoformat(),)
@@ -535,6 +577,7 @@ class DatabaseManager:
                     FROM attendance AS a
                     JOIN persons AS p ON p.person_id = a.person_id
                     WHERE a.date=? AND p.face_signature IS NOT NULL
+                      AND COALESCE(p.role, 'guest') != 'internal'
                     """,
                     (today_str,),
                 )
@@ -563,7 +606,8 @@ class DatabaseManager:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    SELECT person_id, face_signature, registered_date
+                    SELECT person_id, face_signature, display_name, role,
+                           reference_photo_path, registered_date
                     FROM persons
                     WHERE person_id=?
                     """,
@@ -581,7 +625,8 @@ class DatabaseManager:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    SELECT person_id, face_signature, registered_date
+                    SELECT person_id, face_signature, display_name, role,
+                           reference_photo_path, registered_date
                     FROM persons
                     WHERE face_signature IS NOT NULL
                     ORDER BY person_id
@@ -592,7 +637,14 @@ class DatabaseManager:
             logger.error(f"Error fetching all persons: {e}")
             return []
 
-    def add_person(self, person_id: str, face_signature: Optional[str] = None) -> bool:
+    def add_person(
+        self,
+        person_id: str,
+        face_signature: Optional[str] = None,
+        display_name: Optional[str] = None,
+        role: str = "guest",
+        reference_photo_path: Optional[str] = None,
+    ) -> bool:
         """
         Register a new unique ID in the database.
 
@@ -607,10 +659,11 @@ class DatabaseManager:
             with self._get_connection() as conn:
                 conn.execute(
                     """
-                    INSERT INTO persons (person_id, face_signature)
-                    VALUES (?, ?)
+                    INSERT INTO persons
+                        (person_id, face_signature, display_name, role, reference_photo_path)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
-                    (person_id, face_signature)
+                    (person_id, face_signature, display_name, role, reference_photo_path)
                 )
                 conn.commit()
                 logger.info(f"Person registered: {person_id}")
@@ -632,6 +685,54 @@ class DatabaseManager:
         except sqlite3.Error as e:
             logger.error(f"Error updating signature for {person_id}: {e}")
             return False
+
+    def upsert_internal_person(
+        self,
+        person_id: str,
+        display_name: str,
+        face_signature: str,
+        reference_photo_path: str,
+    ) -> bool:
+        """Create or update an internal team member excluded from attendance."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO persons
+                        (person_id, face_signature, display_name, role, reference_photo_path)
+                    VALUES (?, ?, ?, 'internal', ?)
+                    ON CONFLICT(person_id) DO UPDATE SET
+                        face_signature=excluded.face_signature,
+                        display_name=excluded.display_name,
+                        role='internal',
+                        reference_photo_path=excluded.reference_photo_path
+                    """,
+                    (person_id, face_signature, display_name, reference_photo_path),
+                )
+                conn.commit()
+                return True
+        except sqlite3.Error as e:
+            logger.error(f"Error saving internal person {person_id}: {e}")
+            return False
+
+    def get_internal_persons(self) -> List[sqlite3.Row]:
+        """Return internal team members excluded from attendance."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT person_id, display_name, reference_photo_path,
+                           registered_date
+                    FROM persons
+                    WHERE role = 'internal' AND face_signature IS NOT NULL
+                    ORDER BY display_name COLLATE NOCASE, person_id
+                    """
+                )
+                return cursor.fetchall()
+        except sqlite3.Error as e:
+            logger.error(f"Error fetching internal persons: {e}")
+            return []
 
     def get_next_face_id(self, for_date: Optional[date] = None) -> str:
         """Return the next FACE-YYYYMMDD-NNNN ID for the given date."""
@@ -669,7 +770,14 @@ class DatabaseManager:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
 
-                cursor.execute("SELECT COUNT(*) FROM persons WHERE face_signature IS NOT NULL")
+                cursor.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM persons
+                    WHERE face_signature IS NOT NULL
+                      AND COALESCE(role, 'guest') != 'internal'
+                    """
+                )
                 total_persons = cursor.fetchone()[0]
 
                 today_str = date.today().isoformat()
@@ -679,6 +787,7 @@ class DatabaseManager:
                     FROM attendance AS a
                     JOIN persons AS p ON p.person_id = a.person_id
                     WHERE a.date=? AND p.face_signature IS NOT NULL
+                      AND COALESCE(p.role, 'guest') != 'internal'
                     """,
                     (today_str,),
                 )
@@ -690,6 +799,7 @@ class DatabaseManager:
                     FROM attendance AS a
                     JOIN persons AS p ON p.person_id = a.person_id
                     WHERE p.face_signature IS NOT NULL
+                      AND COALESCE(p.role, 'guest') != 'internal'
                     """
                 )
                 all_time_count = cursor.fetchone()[0]

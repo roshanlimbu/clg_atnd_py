@@ -350,3 +350,58 @@ Cleaning up...
 ============================================================
 2026-04-29 07:44:30 [INFO] main:   Attendance system stopped cleanly.
 2026-04-29 07:44:30 [INFO] main: ============================================================
+2026-04-29 08:38:50 [INFO] main: ============================================================
+2026-04-29 08:38:50 [INFO] main:   Face Recognition Attendance Management System
+2026-04-29 08:38:50 [INFO] main: ============================================================
+2026-04-29 08:38:50 [INFO] main:   Started: 2026-04-29 08:38:50
+2026-04-29 08:38:50 [INFO] main:   Base dir: /Users/limburoshan/Code/college/atnd_py/abijeet
+2026-04-29 08:38:50 [INFO] main: Running pre-flight checks...
+2026-04-29 08:38:50 [INFO] main:   ✅ attendance.db
+2026-04-29 08:38:50 [INFO] main: All pre-flight checks passed.
+
+2026-04-29 08:38:50 [INFO] main: Initializing system components...
+2026-04-29 08:38:50 [INFO] database: Database verified at: /Users/limburoshan/Code/college/atnd_py/abijeet/attendance.db
+2026-04-29 08:38:50 [INFO] main: ✅ Database connected
+2026-04-29 08:38:50 [INFO] memory: Memory loaded from memory_2026-04-29.txt: 8 persons already marked today
+2026-04-29 08:38:50 [INFO] main: ✅ Daily memory loaded
+2026-04-29 08:38:53 [WARNING] detector: Could not load yolov8n-face.pt: [Errno 2] No such file or directory: 'yolov8n-face.pt'
+2026-04-29 08:38:53 [INFO] detector: Using OpenCV face detector fallback
+2026-04-29 08:38:53 [INFO] detector: OpenCV Haar face detector loaded with validation filters
+2026-04-29 08:38:54 [INFO] detector: dlib HOG face detector loaded via face_recognition
+2026-04-29 08:38:54 [INFO] detector: MediaPipe alignment disabled; using direct face crops
+2026-04-29 08:38:54 [INFO] main: ✅ Face detector ready
+2026-04-29 08:38:54 [INFO] face_identity: Face identity cache loaded: 8 known faces
+2026-04-29 08:38:54 [INFO] main: ✅ Face identity manager ready
+2026-04-29 08:38:54 [INFO] attendance: AttendanceRecorder initialized.
+2026-04-29 08:38:54 [INFO] main: ✅ Attendance recorder ready
+2026-04-29 08:38:54 [INFO] main: 
+System ready. Starting live feed...
+2026-04-29 08:38:54 [INFO] main: Press Q in the camera window to quit.
+
+2026-04-29 08:38:57 [INFO] camera: Camera opened at index 0
+2026-04-29 08:39:24 [WARNING] camera: Failed to read frame from camera
+2026-04-29 08:39:24 [INFO] main: 
+Cleaning up...
+2026-04-29 08:39:24 [INFO] camera: Camera released
+2026-04-29 08:39:24 [INFO] attendance: =======================================================
+2026-04-29 08:39:24 [INFO] attendance:   ATTENDANCE SUMMARY — 2026-04-29
+2026-04-29 08:39:24 [INFO] attendance: =======================================================
+2026-04-29 08:39:24 [INFO] attendance:   Attendance count     : 15
+2026-04-29 08:39:24 [INFO] attendance:   Unique faces         : 7
+2026-04-29 08:39:24 [INFO] attendance:   Session counted      : 0
+2026-04-29 08:39:24 [INFO] attendance:   Debounced sightings  : 0
+2026-04-29 08:39:24 [INFO] attendance:   Unknown faces seen   : 1
+2026-04-29 08:39:24 [INFO] attendance: -------------------------------------------------------
+2026-04-29 08:39:24 [INFO] attendance:   Attendance log:
+2026-04-29 08:39:24 [INFO] attendance:     06:45:58  FACE-20260429-0002    count=3    last=07:43:33
+2026-04-29 08:39:24 [INFO] attendance:     06:46:08  FACE-20260429-0003    count=2    last=07:33:35
+2026-04-29 08:39:24 [INFO] attendance:     06:46:12  FACE-20260429-0004    count=4    last=07:43:01
+2026-04-29 08:39:24 [INFO] attendance:     06:46:18  FACE-20260428-0001    count=2    last=07:43:23
+2026-04-29 08:39:24 [INFO] attendance:     06:46:32  FACE-20260429-0005    count=1    last=06:46:32
+2026-04-29 08:39:24 [INFO] attendance:     06:49:33  FACE-20260429-0006    count=2    last=07:43:32
+2026-04-29 08:39:24 [INFO] attendance:     06:50:51  FACE-20260429-0007    count=1    last=06:50:51
+2026-04-29 08:39:24 [INFO] attendance: =======================================================
+2026-04-29 08:39:24 [INFO] main: 
+============================================================
+2026-04-29 08:39:24 [INFO] main:   Attendance system stopped cleanly.
+2026-04-29 08:39:24 [INFO] main: ============================================================

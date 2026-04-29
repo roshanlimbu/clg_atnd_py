@@ -65,12 +65,34 @@
           </div>
         </section>
 
-        <aside class="panel side-panel">
-          <div class="panel-head">
-            <h2>Client Samples</h2>
-            <span id="sample-count">0 samples</span>
-          </div>
-          <ol id="sample-list" class="sample-list"></ol>
+        <aside class="side-stack">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Internal Team</h2>
+              <span id="internal-count">0 saved</span>
+            </div>
+            <form id="internal-form" class="internal-form">
+              <label>
+                <span>Name</span>
+                <input id="internal-name" name="name" type="text" autocomplete="name" required>
+              </label>
+              <label>
+                <span>Photo</span>
+                <input id="internal-photo" name="photo" type="file" accept="image/*" required>
+              </label>
+              <button type="submit">Save Member</button>
+              <p id="internal-status" class="form-status" role="status"></p>
+            </form>
+            <ul id="internal-list" class="internal-list"></ul>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Client Samples</h2>
+              <span id="sample-count">0 samples</span>
+            </div>
+            <ol id="sample-list" class="sample-list"></ol>
+          </section>
         </aside>
       </section>
     </main>

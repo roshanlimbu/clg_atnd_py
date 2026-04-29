@@ -12,6 +12,7 @@ This is far more accurate than the previous DCT perceptual hash approach.
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import date
 from typing import List, Optional, Sequence, Tuple
@@ -33,6 +34,8 @@ class FaceIdentityResult:
     is_new: bool = False
     unknown: bool = False
     above_threshold: bool = True
+    display_name: Optional[str] = None
+    role: str = "guest"
 
     @property
     def is_unknown(self) -> bool:
@@ -41,6 +44,20 @@ class FaceIdentityResult:
     @property
     def is_above_threshold(self) -> bool:
         return self.above_threshold
+
+    @property
+    def is_internal(self) -> bool:
+        return self.role == "internal"
+
+
+@dataclass
+class KnownFace:
+    """Stored identity embedding plus metadata."""
+
+    person_id: str
+    embedding: np.ndarray
+    display_name: Optional[str] = None
+    role: str = "guest"
 
 
 class FaceIdentityManager:
@@ -57,11 +74,13 @@ class FaceIdentityManager:
     """
 
     MATCH_DISTANCE_THRESHOLD = 0.58
+    CACHE_REFRESH_SECONDS = 10
 
     def __init__(self, db_manager: DatabaseManager):
         self._face_recognition = self._import_face_recognition()
         self.db = db_manager
-        self._known: List[Tuple[str, np.ndarray]] = self._load_known_embeddings()
+        self._known: List[KnownFace] = self._load_known_embeddings()
+        self._last_refresh_at = time.monotonic()
         logger.info("Face identity cache loaded: %s known faces", len(self._known))
 
     # ── Public API ────────────────────────────────────────────────────────
@@ -70,6 +89,7 @@ class FaceIdentityManager:
         self, face_images: Sequence[np.ndarray]
     ) -> List[FaceIdentityResult]:
         """Identify or register a batch of aligned RGB face images."""
+        self._refresh_known_embeddings_if_needed()
         return [self.identify(image) for image in face_images]
 
     def identify(self, face_image: np.ndarray) -> FaceIdentityResult:
@@ -87,14 +107,48 @@ class FaceIdentityManager:
 
         match = self._find_best_match(embedding)
         if match is not None:
-            person_id, confidence = match
+            known_face, confidence = match
             # Incrementally update the stored embedding toward the new one so
             # it adapts to natural changes in lighting/angle over time.
-            self._update_embedding(person_id, embedding)
-            return FaceIdentityResult(person_id=person_id, confidence=confidence, is_new=False)
+            if known_face.role != "internal":
+                self._update_embedding(known_face.person_id, embedding)
+            return FaceIdentityResult(
+                person_id=known_face.person_id,
+                confidence=confidence,
+                is_new=False,
+                display_name=known_face.display_name,
+                role=known_face.role,
+            )
 
         person_id = self._create_person(embedding)
         return FaceIdentityResult(person_id=person_id, confidence=1.0, is_new=True)
+
+    def compute_signature(self, face_image: np.ndarray) -> Optional[str]:
+        """Compute a serialized face embedding for uploaded reference images."""
+        embedding = self._compute_embedding(face_image)
+        if embedding is None:
+            return None
+        return self._serialize(embedding)
+
+    def compute_signature_and_match(
+        self, face_image: np.ndarray
+    ) -> tuple[Optional[str], Optional[FaceIdentityResult]]:
+        """Compute a reference signature and find an existing matching identity."""
+        embedding = self._compute_embedding(face_image)
+        if embedding is None:
+            return None, None
+
+        match = self._find_best_match(embedding)
+        if match is None:
+            return self._serialize(embedding), None
+
+        known_face, confidence = match
+        return self._serialize(embedding), FaceIdentityResult(
+            person_id=known_face.person_id,
+            confidence=confidence,
+            display_name=known_face.display_name,
+            role=known_face.role,
+        )
 
     # ── Internal helpers ──────────────────────────────────────────────────
 
@@ -109,14 +163,29 @@ class FaceIdentityManager:
                 "Run: pip install face-recognition  (requires cmake: brew install cmake)"
             )
 
-    def _load_known_embeddings(self) -> List[Tuple[str, np.ndarray]]:
+    def _load_known_embeddings(self) -> List[KnownFace]:
         result = []
         for person in self.db.get_all_persons():
             sig = person["face_signature"]
             emb = self._deserialize(sig)
             if emb is not None:
-                result.append((person["person_id"], emb))
+                result.append(KnownFace(
+                    person_id=person["person_id"],
+                    embedding=emb,
+                    display_name=person["display_name"],
+                    role=person["role"] or "guest",
+                ))
         return result
+
+    def _refresh_known_embeddings_if_needed(self):
+        """Pick up identities added from the dashboard while the camera runs."""
+        now = time.monotonic()
+        if now - self._last_refresh_at < self.CACHE_REFRESH_SECONDS:
+            return
+
+        self._known = self._load_known_embeddings()
+        self._last_refresh_at = now
+        logger.debug("Face identity cache refreshed: %s known faces", len(self._known))
 
     def _create_person(self, embedding: Optional[np.ndarray]) -> str:
         serialized = self._serialize(embedding) if embedding is not None else None
@@ -124,7 +193,10 @@ class FaceIdentityManager:
             person_id = self.db.get_next_face_id(date.today())
             if self.db.add_person(person_id, serialized):
                 if embedding is not None:
-                    self._known.append((person_id, embedding))
+                    self._known.append(KnownFace(
+                        person_id=person_id,
+                        embedding=embedding,
+                    ))
                 logger.info("Registered new face ID: %s", person_id)
                 return person_id
         raise RuntimeError("Could not allocate a unique face ID")
@@ -132,21 +204,20 @@ class FaceIdentityManager:
     def _update_embedding(self, person_id: str, new_embedding: np.ndarray) -> None:
         """Exponential moving average update: blends new embedding into stored one."""
         alpha = 0.1  # weight given to the new sample; 0.1 = slow, stable adaptation
-        for i, (pid, stored_emb) in enumerate(self._known):
-            if pid == person_id:
-                updated = (1.0 - alpha) * stored_emb + alpha * new_embedding
-                self._known[i] = (person_id, updated)
+        for known_face in self._known:
+            if known_face.person_id == person_id:
+                updated = (1.0 - alpha) * known_face.embedding + alpha * new_embedding
+                known_face.embedding = updated
                 self.db.update_person_signature(person_id, self._serialize(updated))
                 break
 
     def _find_best_match(
         self, embedding: np.ndarray
-    ) -> Optional[Tuple[str, float]]:
+    ) -> Optional[Tuple[KnownFace, float]]:
         if not self._known:
             return None
 
-        known_encs = [enc for _, enc in self._known]
-        person_ids = [pid for pid, _ in self._known]
+        known_encs = [known_face.embedding for known_face in self._known]
 
         distances = self._face_recognition.face_distance(known_encs, embedding)
         best_idx = int(np.argmin(distances))
@@ -156,7 +227,7 @@ class FaceIdentityManager:
             return None
 
         confidence = float(1.0 - best_distance)
-        return person_ids[best_idx], confidence
+        return self._known[best_idx], confidence
 
     def _compute_embedding(self, face_rgb: np.ndarray) -> Optional[np.ndarray]:
         """

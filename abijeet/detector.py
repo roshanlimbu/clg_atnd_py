@@ -552,6 +552,7 @@ class FaceDetector:
         Color coding:
             Green  (#00FF00) — Successfully marked present
             Yellow (#FFFF00) — Already marked today
+            Blue   (#3388FF) — Internal team member, not counted
             Red    (#FF0000) — Unknown face
             Gray   (#888888) — Below confidence threshold
 
@@ -571,6 +572,7 @@ class FaceDetector:
         COLOR_MAP = {
             "marked":           (0,   255,  0),    # Green
             "already_marked":   (0,   255, 255),   # Yellow
+            "internal":         (255, 136, 51),    # Blue
             "unknown":          (0,   0,   255),   # Red
             "low_confidence":   (128, 128, 128),   # Gray
         }
@@ -578,6 +580,7 @@ class FaceDetector:
         LABEL_MAP = {
             "marked":           "Counted",
             "already_marked":   "Debounced",
+            "internal":         "Internal",
             "unknown":          "Unknown",
             "low_confidence":   "Low Confidence",
         }
@@ -600,12 +603,15 @@ class FaceDetector:
             # Build label text
             if result:
                 person_id = result.get("person_id", "?")
+                display_name = result.get("display_name") or person_id
                 conf = result.get("confidence", 0.0)
                 count = result.get("count", 0)
                 status_label = LABEL_MAP.get(status, status)
 
                 if status in ("unknown", "low_confidence"):
                     label = f"{status_label} ({conf:.0%})"
+                elif status == "internal":
+                    label = f"{display_name} | Not counted"
                 else:
                     label = f"{person_id} | {status_label} #{count}"
             else:

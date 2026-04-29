@@ -33,6 +33,7 @@ STATUS_MARKED          = "marked"          # Successfully marked (green)
 STATUS_ALREADY_MARKED  = "already_marked"  # Debounced inside the time window (yellow)
 STATUS_UNKNOWN         = "unknown"         # Unknown face (red)
 STATUS_LOW_CONFIDENCE  = "low_confidence"  # Below threshold (gray)
+STATUS_INTERNAL        = "internal"        # Internal team member (blue, not counted)
 
 DEBOUNCE_MINUTES = 5
 
@@ -46,11 +47,13 @@ class AttendanceResult:
         confidence: float,
         status: str,
         count: int = 0,
+        display_name: Optional[str] = None,
     ):
         self.person_id = person_id
         self.confidence = confidence
         self.status = status
         self.count = count
+        self.display_name = display_name
 
     def as_dict(self) -> dict:
         """Convert to dict for use with detector.draw_detections()."""
@@ -59,6 +62,7 @@ class AttendanceResult:
             "confidence": self.confidence,
             "status": self.status,
             "count": self.count,
+            "display_name": self.display_name,
         }
 
     def __repr__(self):
@@ -141,10 +145,23 @@ class AttendanceRecorder:
                 person_id=recognition.person_id,
                 confidence=recognition.confidence,
                 status=STATUS_LOW_CONFIDENCE,
+                display_name=recognition.display_name,
             )
 
         person_id = recognition.person_id
         confidence = recognition.confidence
+
+        if recognition.is_internal:
+            logger.debug(
+                "Internal team member ignored for attendance: %s",
+                recognition.display_name or person_id,
+            )
+            return AttendanceResult(
+                person_id=person_id,
+                confidence=confidence,
+                status=STATUS_INTERNAL,
+                display_name=recognition.display_name,
+            )
 
         # ── STEP 12 — Record in SQLite Database ──────────────────────────
         now = datetime.now()
@@ -163,6 +180,7 @@ class AttendanceRecorder:
                 confidence=confidence,
                 status=STATUS_ALREADY_MARKED,
                 count=count,
+                display_name=recognition.display_name,
             )
 
         if db_action == "error":
@@ -171,6 +189,7 @@ class AttendanceRecorder:
                 confidence=confidence,
                 status=STATUS_LOW_CONFIDENCE,
                 count=count,
+                display_name=recognition.display_name,
             )
 
         # ── STEP 13 — Update Memory File ─────────────────────────────────
@@ -206,6 +225,7 @@ class AttendanceRecorder:
             confidence=confidence,
             status=STATUS_MARKED,
             count=count,
+            display_name=recognition.display_name,
         )
 
     def process_frame_recognitions(

@@ -89,6 +89,7 @@ def create_directory_structure(base_dir: Path):
         base_dir / "models",
         base_dir / "attendance_memory",
         base_dir / "attendance_photos",
+        base_dir / "internal_team_photos",
         base_dir / "converted_model",
         base_dir / "logs",
     ]
@@ -122,6 +123,9 @@ def initialize_database(base_dir: Path):
         CREATE TABLE IF NOT EXISTS persons (
             person_id       TEXT PRIMARY KEY,
             face_signature  TEXT,
+            display_name    TEXT,
+            role            TEXT NOT NULL DEFAULT 'guest',
+            reference_photo_path TEXT,
             registered_date DATE NOT NULL DEFAULT (DATE('now'))
         );
     """)
@@ -173,6 +177,12 @@ def initialize_database(base_dir: Path):
     print("  [OK] Index on attendance(person_id, date) created.")
 
     cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_persons_role
+        ON persons(role);
+    """)
+    print("  [OK] Index on persons(role) created.")
+
+    cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_attendance_photos_date
         ON attendance_photos(date);
     """)
@@ -212,7 +222,19 @@ def migrate_database_schema(conn: sqlite3.Connection):
         or "last_seen" not in attendance_columns
         or "count" not in attendance_columns
     )
+    if "display_name" not in person_columns:
+        cursor.execute("ALTER TABLE persons ADD COLUMN display_name TEXT;")
+        person_columns.add("display_name")
+    if "role" not in person_columns:
+        cursor.execute("ALTER TABLE persons ADD COLUMN role TEXT NOT NULL DEFAULT 'guest';")
+        person_columns.add("role")
+    if "reference_photo_path" not in person_columns:
+        cursor.execute("ALTER TABLE persons ADD COLUMN reference_photo_path TEXT;")
+        person_columns.add("reference_photo_path")
+
     if not needs_migration:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_persons_role ON persons(role);")
+        conn.commit()
         return
 
     print("  [MIGRATE] Updating database for generated face IDs and counts.")
@@ -221,19 +243,36 @@ def migrate_database_schema(conn: sqlite3.Connection):
         CREATE TABLE IF NOT EXISTS persons_new (
             person_id       TEXT PRIMARY KEY,
             face_signature  TEXT,
+            display_name    TEXT,
+            role            TEXT NOT NULL DEFAULT 'guest',
+            reference_photo_path TEXT,
             registered_date DATE NOT NULL DEFAULT (DATE('now'))
         );
     """)
     if "face_signature" in person_columns:
-        cursor.execute("""
+        if "display_name" in person_columns and "name" in person_columns:
+            display_expr = "COALESCE(display_name, name)"
+        elif "display_name" in person_columns:
+            display_expr = "display_name"
+        elif "name" in person_columns:
+            display_expr = "name"
+        else:
+            display_expr = "NULL"
+        role_expr = "role" if "role" in person_columns else "'guest'"
+        photo_expr = (
+            "reference_photo_path"
+            if "reference_photo_path" in person_columns
+            else "NULL"
+        )
+        cursor.execute(f"""
             INSERT OR IGNORE INTO persons_new
-                (person_id, face_signature, registered_date)
-            SELECT person_id, face_signature, registered_date FROM persons;
+                (person_id, face_signature, display_name, role, reference_photo_path, registered_date)
+            SELECT person_id, face_signature, {display_expr}, {role_expr}, {photo_expr}, registered_date FROM persons;
         """)
     else:
         cursor.execute("""
-            INSERT OR IGNORE INTO persons_new (person_id, registered_date)
-            SELECT person_id, registered_date FROM persons;
+            INSERT OR IGNORE INTO persons_new (person_id, display_name, role, registered_date)
+            SELECT person_id, NULL, 'guest', registered_date FROM persons;
         """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS attendance_new (
@@ -277,6 +316,7 @@ def migrate_database_schema(conn: sqlite3.Connection):
         CREATE INDEX IF NOT EXISTS idx_attendance_person_date
         ON attendance(person_id, date);
     """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_persons_role ON persons(role);")
     cursor.execute("PRAGMA foreign_keys=ON;")
     conn.commit()
 
@@ -346,6 +386,7 @@ def print_project_summary(base_dir: Path):
   │   └── metadata.json       ← Optional Teachable Machine export
   ├── attendance_memory/      ← Daily memory text files (auto-created)
   ├── attendance_photos/      ← Saved face photos for each counted arrival
+  ├── internal_team_photos/   ← Reference photos for excluded team members
   ├── converted_model/        ← Optional legacy classifier output
   ├── logs/                   ← Runtime logs
   ├── attendance.db           ← SQLite database ✓

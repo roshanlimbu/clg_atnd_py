@@ -17,6 +17,12 @@ const elements = {
   nextSync: document.querySelector("#next-sync"),
   activeWindow: document.querySelector("#active-window"),
   facesBody: document.querySelector("#faces-body"),
+  internalForm: document.querySelector("#internal-form"),
+  internalName: document.querySelector("#internal-name"),
+  internalPhoto: document.querySelector("#internal-photo"),
+  internalStatus: document.querySelector("#internal-status"),
+  internalCount: document.querySelector("#internal-count"),
+  internalList: document.querySelector("#internal-list"),
   sampleCount: document.querySelector("#sample-count"),
   sampleList: document.querySelector("#sample-list"),
 };
@@ -57,6 +63,7 @@ function renderSummary(data) {
   elements.syncLabel.textContent = `Last synced ${data.server_time}`;
 
   renderFaces(data.faces);
+  renderInternalTeam(data.internal_team || []);
   recordSample(data);
 }
 
@@ -92,6 +99,75 @@ function renderPhoto(face) {
       <img class="face-photo" src="${escapeAttribute(face.photo_url)}" alt="Saved face photo for ${escapeAttribute(face.person_id)}">
     </a>
   `;
+}
+
+function renderInternalTeam(members) {
+  elements.internalCount.textContent = `${members.length} saved`;
+  if (!members.length) {
+    elements.internalList.innerHTML = `
+      <li class="internal-empty">No internal members saved.</li>
+    `;
+    return;
+  }
+
+  elements.internalList.innerHTML = members.map((member) => `
+    <li>
+      ${renderInternalPhoto(member)}
+      <span>
+        <strong>${escapeHtml(member.display_name || member.person_id)}</strong>
+        <em>${escapeHtml(member.person_id)}</em>
+      </span>
+    </li>
+  `).join("");
+}
+
+function renderInternalPhoto(member) {
+  if (!member.photo_url) {
+    return `<span class="internal-avatar"></span>`;
+  }
+
+  return `
+    <img class="internal-avatar" src="${escapeAttribute(member.photo_url)}" alt="${escapeAttribute(member.display_name || "Internal member")}">
+  `;
+}
+
+async function handleInternalSubmit(event) {
+  event.preventDefault();
+  const formData = new FormData(elements.internalForm);
+  const name = String(formData.get("name") || "").trim();
+  const photo = formData.get("photo");
+
+  if (!name || !(photo instanceof File) || photo.size === 0) {
+    setInternalStatus("Name and photo are required.", "error");
+    return;
+  }
+
+  setInternalStatus("Saving...", "pending");
+  elements.internalForm.querySelector("button").disabled = true;
+
+  try {
+    const response = await fetch("/api/internal-team", {
+      method: "POST",
+      body: formData,
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+
+    elements.internalForm.reset();
+    setInternalStatus("Saved. This face will not be counted.", "ok");
+    await fetchSummary();
+  } catch (error) {
+    setInternalStatus(error.message, "error");
+  } finally {
+    elements.internalForm.querySelector("button").disabled = false;
+  }
+}
+
+function setInternalStatus(message, status) {
+  elements.internalStatus.textContent = message;
+  elements.internalStatus.className = `form-status ${status}`;
 }
 
 function recordSample(data) {
@@ -153,3 +229,4 @@ function escapeAttribute(value) {
 fetchSummary();
 startCountdown();
 window.setInterval(fetchSummary, POLL_MS);
+elements.internalForm.addEventListener("submit", handleInternalSubmit);
