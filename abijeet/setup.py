@@ -88,6 +88,7 @@ def create_directory_structure(base_dir: Path):
     directories = [
         base_dir / "models",
         base_dir / "attendance_memory",
+        base_dir / "attendance_photos",
         base_dir / "converted_model",
         base_dir / "logs",
     ]
@@ -142,6 +143,22 @@ def initialize_database(base_dir: Path):
     """)
     print("  [OK] Table 'attendance' created with UNIQUE(person_id, date) constraint.")
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS attendance_photos (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            person_id   TEXT    NOT NULL,
+            date        DATE    NOT NULL,
+            time        TIME    NOT NULL,
+            count       INTEGER NOT NULL,
+            confidence  REAL,
+            image_path  TEXT    NOT NULL,
+            created_at  TEXT    NOT NULL DEFAULT (DATETIME('now')),
+            UNIQUE(person_id, date, count),
+            FOREIGN KEY (person_id) REFERENCES persons(person_id)
+        );
+    """)
+    print("  [OK] Table 'attendance_photos' created for saved face photos.")
+
     # ── Index for fast date-range queries ─────────────────────────────────
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_attendance_date
@@ -154,6 +171,16 @@ def initialize_database(base_dir: Path):
         ON attendance(person_id, date);
     """)
     print("  [OK] Index on attendance(person_id, date) created.")
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_attendance_photos_date
+        ON attendance_photos(date);
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_attendance_photos_person_date
+        ON attendance_photos(person_id, date);
+    """)
+    print("  [OK] Indexes on attendance_photos created.")
 
     conn.commit()
     migrate_database_schema(conn)
@@ -318,6 +345,7 @@ def print_project_summary(base_dir: Path):
   │   ├── weights.bin         ← Optional Teachable Machine export
   │   └── metadata.json       ← Optional Teachable Machine export
   ├── attendance_memory/      ← Daily memory text files (auto-created)
+  ├── attendance_photos/      ← Saved face photos for each counted arrival
   ├── converted_model/        ← Optional legacy classifier output
   ├── logs/                   ← Runtime logs
   ├── attendance.db           ← SQLite database ✓

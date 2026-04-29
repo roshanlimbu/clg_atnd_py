@@ -1,5 +1,4 @@
-# prerequisites (one-time, macOS)
-# brew install cmake   ← required for dlib (used by face-recognition)
+# prerequisites (one-time)
 # ../venv312/bin/pip install -r requirements.txt
 
 # run to remove the preexisting database and create a new one with the current schema

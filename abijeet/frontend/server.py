@@ -12,7 +12,7 @@ import sqlite3
 from datetime import date, datetime, timedelta
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 
 FRONTEND_DIR = Path(__file__).resolve().parent
@@ -41,6 +41,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self._send_json({"ok": True, "database": str(DATABASE_PATH)})
             return
 
+        if parsed.path.startswith("/attendance_photos/"):
+            self._send_attendance_photo(parsed.path)
+            return
+
         super().do_GET()
 
     def end_headers(self):
@@ -54,6 +58,26 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_attendance_photo(self, request_path: str):
+        relative_path = unquote(request_path).lstrip("/")
+        photo_root = (PROJECT_DIR / "attendance_photos").resolve()
+        photo_path = (PROJECT_DIR / relative_path).resolve()
+
+        if photo_path != photo_root and photo_root not in photo_path.parents:
+            self.send_error(404)
+            return
+
+        if not photo_path.is_file():
+            self.send_error(404)
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", self.guess_type(str(photo_path)))
+        self.send_header("Content-Length", str(photo_path.stat().st_size))
+        self.end_headers()
+        with photo_path.open("rb") as file_obj:
+            self.copyfile(file_obj, self.wfile)
 
 
 def get_connection() -> sqlite3.Connection:
@@ -72,6 +96,29 @@ def get_dashboard_summary() -> dict:
 
     try:
         with get_connection() as conn:
+            has_photos = conn.execute(
+                """
+                SELECT 1
+                FROM sqlite_master
+                WHERE type = 'table' AND name = 'attendance_photos'
+                """
+            ).fetchone() is not None
+
+            photo_select = (
+                """
+                (
+                    SELECT ap.image_path
+                    FROM attendance_photos AS ap
+                    WHERE ap.person_id = a.person_id
+                      AND ap.date = a.date
+                    ORDER BY ap.count DESC, ap.time DESC
+                    LIMIT 1
+                ) AS photo_path
+                """
+                if has_photos
+                else "NULL AS photo_path"
+            )
+
             totals = conn.execute(
                 """
                 SELECT
@@ -88,14 +135,15 @@ def get_dashboard_summary() -> dict:
             ).fetchone()
 
             rows = conn.execute(
-                """
+                f"""
                 SELECT
                     a.person_id,
                     a.date,
                     a.first_seen,
                     a.last_seen,
                     a.count,
-                    a.confidence
+                    a.confidence,
+                    {photo_select}
                 FROM attendance AS a
                 JOIN persons AS p ON p.person_id = a.person_id
                 WHERE a.date = ? AND p.face_signature IS NOT NULL
@@ -136,6 +184,7 @@ def get_dashboard_summary() -> dict:
 def serialize_face(row: sqlite3.Row) -> dict:
     """Convert a SQLite row to JSON-safe dashboard data."""
     confidence = row["confidence"]
+    photo_path = row["photo_path"]
     return {
         "person_id": row["person_id"],
         "date": row["date"],
@@ -143,6 +192,7 @@ def serialize_face(row: sqlite3.Row) -> dict:
         "last_seen": row["last_seen"],
         "count": int(row["count"]),
         "confidence": None if confidence is None else round(float(confidence), 4),
+        "photo_url": None if photo_path is None else f"/{photo_path}",
     }
 
 

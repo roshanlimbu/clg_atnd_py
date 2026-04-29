@@ -45,6 +45,7 @@ METADATA_FILE   = MODELS_DIR / "metadata.json"
 DATABASE_FILE   = BASE_DIR / "attendance.db"
 MEMORY_DIR      = BASE_DIR / "attendance_memory"
 LOGS_DIR        = BASE_DIR / "logs"
+PHOTOS_DIR      = BASE_DIR / "attendance_photos"
 
 # Camera settings
 CAMERA_INDEX    = 0       # 0 = default device camera
@@ -192,7 +193,7 @@ def main():
 
     # Attendance recorder
     from attendance import AttendanceRecorder
-    recorder = AttendanceRecorder(db, memory)
+    recorder = AttendanceRecorder(db, memory, PHOTOS_DIR)
     logger.info("✅ Attendance recorder ready")
 
     # Camera feed
@@ -236,7 +237,8 @@ def main():
 
                     # ── STEPS 11+12+13 — Attendance recording ────────────
                     attendance_results = recorder.process_frame_recognitions(
-                        recognitions
+                        recognitions,
+                        face_images,
                     )
 
                     last_detected_faces = detected_faces

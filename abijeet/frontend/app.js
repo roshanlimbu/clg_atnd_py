@@ -64,7 +64,7 @@ function renderFaces(faces) {
   if (!faces.length) {
     elements.facesBody.innerHTML = `
       <tr>
-        <td colspan="5" class="empty">No face records yet.</td>
+        <td colspan="6" class="empty">No face records yet.</td>
       </tr>
     `;
     return;
@@ -73,12 +73,25 @@ function renderFaces(faces) {
   elements.facesBody.innerHTML = faces.map((face) => `
     <tr>
       <td><span class="face-id">${escapeHtml(face.person_id)}</span></td>
+      <td>${renderPhoto(face)}</td>
       <td>${face.count}</td>
       <td>${escapeHtml(face.first_seen)}</td>
       <td>${escapeHtml(face.last_seen)}</td>
       <td>${formatConfidence(face.confidence)}</td>
     </tr>
   `).join("");
+}
+
+function renderPhoto(face) {
+  if (!face.photo_url) {
+    return `<span class="photo-empty">No photo</span>`;
+  }
+
+  return `
+    <a class="face-photo-link" href="${escapeAttribute(face.photo_url)}" target="_blank" rel="noreferrer">
+      <img class="face-photo" src="${escapeAttribute(face.photo_url)}" alt="Saved face photo for ${escapeAttribute(face.person_id)}">
+    </a>
+  `;
 }
 
 function recordSample(data) {
@@ -131,6 +144,10 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function escapeAttribute(value) {
+  return escapeHtml(value).replaceAll("`", "&#096;");
 }
 
 fetchSummary();

@@ -140,11 +140,35 @@ class DatabaseManager:
             """
         )
         cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS attendance_photos (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                person_id   TEXT    NOT NULL,
+                date        DATE    NOT NULL,
+                time        TIME    NOT NULL,
+                count       INTEGER NOT NULL,
+                confidence  REAL,
+                image_path  TEXT    NOT NULL,
+                created_at  TEXT    NOT NULL DEFAULT (DATETIME('now')),
+                UNIQUE(person_id, date, count),
+                FOREIGN KEY (person_id) REFERENCES persons(person_id)
+            );
+            """
+        )
+        cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(date);"
         )
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_attendance_person_date "
             "ON attendance(person_id, date);"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_attendance_photos_date "
+            "ON attendance_photos(date);"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_attendance_photos_person_date "
+            "ON attendance_photos(person_id, date);"
         )
         conn.commit()
 
@@ -388,6 +412,44 @@ class DatabaseManager:
             logger.error(f"Error checking attendance for {person_id}: {e}")
             return False
 
+    def record_attendance_photo(
+        self,
+        person_id: str,
+        attendance_date: date,
+        attendance_time: datetime,
+        count: int,
+        confidence: float,
+        image_path: str,
+    ) -> bool:
+        """Store metadata for a saved attendance photo."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO attendance_photos
+                        (person_id, date, time, count, confidence, image_path)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(person_id, date, count) DO UPDATE SET
+                        time=excluded.time,
+                        confidence=excluded.confidence,
+                        image_path=excluded.image_path,
+                        created_at=DATETIME('now')
+                    """,
+                    (
+                        person_id,
+                        attendance_date.isoformat(),
+                        attendance_time.strftime("%H:%M:%S"),
+                        int(count),
+                        round(confidence, 4),
+                        image_path,
+                    ),
+                )
+                conn.commit()
+                return True
+        except sqlite3.Error as e:
+            logger.error(f"Error recording attendance photo for {person_id}: {e}")
+            return False
+
     def get_today_attendance(self) -> List[sqlite3.Row]:
         """
         Retrieve all attendance records for today.
@@ -403,7 +465,15 @@ class DatabaseManager:
                 cursor.execute(
                     """
                     SELECT a.id, a.person_id, a.date, a.first_seen, a.last_seen,
-                           a.count, a.confidence
+                           a.count, a.confidence,
+                           (
+                               SELECT ap.image_path
+                               FROM attendance_photos AS ap
+                               WHERE ap.person_id = a.person_id
+                                 AND ap.date = a.date
+                               ORDER BY ap.count DESC, ap.time DESC
+                               LIMIT 1
+                           ) AS photo_path
                     FROM attendance AS a
                     JOIN persons AS p ON p.person_id = a.person_id
                     WHERE a.date = ? AND p.face_signature IS NOT NULL
@@ -432,7 +502,15 @@ class DatabaseManager:
                 cursor.execute(
                     """
                     SELECT a.id, a.person_id, a.date, a.first_seen, a.last_seen,
-                           a.count, a.confidence
+                           a.count, a.confidence,
+                           (
+                               SELECT ap.image_path
+                               FROM attendance_photos AS ap
+                               WHERE ap.person_id = a.person_id
+                                 AND ap.date = a.date
+                               ORDER BY ap.count DESC, ap.time DESC
+                               LIMIT 1
+                           ) AS photo_path
                     FROM attendance AS a
                     JOIN persons AS p ON p.person_id = a.person_id
                     WHERE a.date = ? AND p.face_signature IS NOT NULL

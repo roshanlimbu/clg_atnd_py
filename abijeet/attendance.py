@@ -15,7 +15,11 @@ Coordinates the full attendance pipeline for each recognized face:
 
 import logging
 from datetime import datetime
-from typing import List
+from pathlib import Path
+from typing import List, Optional
+
+import cv2
+import numpy as np
 
 from database import DatabaseManager
 from face_identity import FaceIdentityResult
@@ -78,7 +82,12 @@ class AttendanceRecorder:
         - Midnight rollover for multi-day continuous operation
     """
 
-    def __init__(self, db_manager: DatabaseManager, memory_manager: MemoryManager):
+    def __init__(
+        self,
+        db_manager: DatabaseManager,
+        memory_manager: MemoryManager,
+        photos_dir: Optional[Path] = None,
+    ):
         """
         Args:
             db_manager    : Initialized DatabaseManager instance
@@ -86,6 +95,9 @@ class AttendanceRecorder:
         """
         self.db = db_manager
         self.memory = memory_manager
+        self.photos_dir = photos_dir
+        if self.photos_dir is not None:
+            self.photos_dir.mkdir(parents=True, exist_ok=True)
 
         # Session statistics
         self._session_marked_count: int = 0
@@ -95,7 +107,9 @@ class AttendanceRecorder:
         logger.info("AttendanceRecorder initialized.")
 
     def process_recognition(
-        self, recognition: FaceIdentityResult
+        self,
+        recognition: FaceIdentityResult,
+        face_image: Optional[np.ndarray] = None,
     ) -> AttendanceResult:
         """
         STEPS 11 + 12 + 13 — Process a single face recognition result.
@@ -160,13 +174,31 @@ class AttendanceRecorder:
             )
 
         # ── STEP 13 — Update Memory File ─────────────────────────────────
+        photo_path = self._save_attendance_photo(
+            person_id=person_id,
+            captured_at=now,
+            count=count,
+            confidence=confidence,
+            face_image=face_image,
+        )
+        if photo_path is not None:
+            self.db.record_attendance_photo(
+                person_id=person_id,
+                attendance_date=now.date(),
+                attendance_time=now,
+                count=count,
+                confidence=confidence,
+                image_path=photo_path,
+            )
+
         self.memory.mark_person(person_id)
         self._session_marked_count += 1
 
         logger.info(
             f"✅ COUNTED: {person_id} | count={count} | "
             f"confidence={confidence:.2%} | "
-            f"time={now.strftime('%H:%M:%S')}"
+            f"time={now.strftime('%H:%M:%S')} | "
+            f"photo={photo_path or 'not saved'}"
         )
 
         return AttendanceResult(
@@ -179,6 +211,7 @@ class AttendanceRecorder:
     def process_frame_recognitions(
         self,
         recognitions: List[FaceIdentityResult],
+        face_images: Optional[List[np.ndarray]] = None,
     ) -> List[AttendanceResult]:
         """
         Process all recognition results from a single frame.
@@ -198,11 +231,58 @@ class AttendanceRecorder:
             )
 
         results = []
-        for recognition in recognitions:
-            result = self.process_recognition(recognition)
+        for index, recognition in enumerate(recognitions):
+            face_image = None
+            if face_images is not None and index < len(face_images):
+                face_image = face_images[index]
+            result = self.process_recognition(recognition, face_image)
             results.append(result)
 
         return results
+
+    def _save_attendance_photo(
+        self,
+        person_id: str,
+        captured_at: datetime,
+        count: int,
+        confidence: float,
+        face_image: Optional[np.ndarray],
+    ) -> Optional[str]:
+        """Save the face crop for one counted attendance event."""
+        if self.photos_dir is None or face_image is None or face_image.size == 0:
+            return None
+
+        try:
+            date_dir = self.photos_dir / captured_at.date().isoformat()
+            date_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = captured_at.strftime("%H%M%S")
+            safe_person_id = "".join(
+                char if char.isalnum() or char in ("-", "_") else "_"
+                for char in person_id
+            )
+            filename = (
+                f"{timestamp}_{safe_person_id}_count-{count}_"
+                f"conf-{int(confidence * 100):03d}.jpg"
+            )
+            output_path = date_dir / filename
+
+            image = face_image
+            if image.dtype != np.uint8:
+                image = np.clip(image, 0, 255).astype(np.uint8)
+
+            if image.ndim == 3 and image.shape[2] == 3:
+                image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            else:
+                image_bgr = image
+
+            if not cv2.imwrite(str(output_path), image_bgr):
+                logger.warning("OpenCV did not save attendance photo: %s", output_path)
+                return None
+
+            return output_path.relative_to(self.photos_dir.parent).as_posix()
+        except Exception as exc:
+            logger.warning("Failed to save attendance photo for %s: %s", person_id, exc)
+            return None
 
     def get_session_stats(self) -> dict:
         """Return statistics for this program session."""

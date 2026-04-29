@@ -1,0 +1,352 @@
+2026-04-29 06:45:15 [INFO] main: ============================================================
+2026-04-29 06:45:15 [INFO] main:   Face Recognition Attendance Management System
+2026-04-29 06:45:15 [INFO] main: ============================================================
+2026-04-29 06:45:15 [INFO] main:   Started: 2026-04-29 06:45:15
+2026-04-29 06:45:15 [INFO] main:   Base dir: /Users/limburoshan/Code/college/atnd_py/abijeet
+2026-04-29 06:45:15 [INFO] main: Running pre-flight checks...
+2026-04-29 06:45:15 [INFO] main:   ✅ attendance.db
+2026-04-29 06:45:15 [INFO] main: All pre-flight checks passed.
+
+2026-04-29 06:45:15 [INFO] main: Initializing system components...
+2026-04-29 06:45:15 [INFO] database: Database verified at: /Users/limburoshan/Code/college/atnd_py/abijeet/attendance.db
+2026-04-29 06:45:15 [INFO] main: ✅ Database connected
+2026-04-29 06:45:15 [INFO] memory: New memory file created: memory_2026-04-29.txt (fresh start — no one marked yet today)
+2026-04-29 06:45:15 [INFO] main: ✅ Daily memory loaded
+2026-04-29 06:45:20 [WARNING] detector: Could not load yolov8n-face.pt: [Errno 2] No such file or directory: 'yolov8n-face.pt'
+2026-04-29 06:45:20 [INFO] detector: Using OpenCV face detector fallback
+2026-04-29 06:45:20 [INFO] detector: OpenCV Haar face detector loaded with validation filters
+2026-04-29 06:45:21 [INFO] detector: dlib HOG face detector loaded via face_recognition
+2026-04-29 06:45:21 [INFO] detector: MediaPipe alignment disabled; using direct face crops
+2026-04-29 06:45:21 [INFO] main: ✅ Face detector ready
+2026-04-29 06:45:21 [INFO] face_identity: Face identity cache loaded: 1 known faces
+2026-04-29 06:45:21 [INFO] main: ✅ Face identity manager ready
+2026-04-29 06:45:21 [INFO] attendance: AttendanceRecorder initialized.
+2026-04-29 06:45:21 [INFO] main: ✅ Attendance recorder ready
+2026-04-29 06:45:21 [INFO] main: 
+System ready. Starting live feed...
+2026-04-29 06:45:21 [INFO] main: Press Q in the camera window to quit.
+
+2026-04-29 06:45:23 [INFO] camera: Camera opened at index 0
+2026-04-29 06:45:45 [INFO] database: Person registered: FACE-20260429-0001
+2026-04-29 06:45:45 [INFO] face_identity: Registered new face ID: FACE-20260429-0001
+2026-04-29 06:45:45 [INFO] database: Attendance started: FACE-20260429-0001 on 2026-04-29 at 06:45:45 | confidence=100.00%
+2026-04-29 06:45:45 [INFO] attendance: ✅ COUNTED: FACE-20260429-0001 | count=1 | confidence=100.00% | time=06:45:45
+2026-04-29 06:45:45 [INFO] main: 🎯 COUNTED: FACE-20260429-0001 — count=1
+2026-04-29 06:45:58 [INFO] database: Person registered: FACE-20260429-0002
+2026-04-29 06:45:58 [INFO] face_identity: Registered new face ID: FACE-20260429-0002
+2026-04-29 06:45:58 [INFO] database: Attendance started: FACE-20260429-0002 on 2026-04-29 at 06:45:58 | confidence=100.00%
+2026-04-29 06:45:58 [INFO] attendance: ✅ COUNTED: FACE-20260429-0002 | count=1 | confidence=100.00% | time=06:45:58
+2026-04-29 06:45:58 [INFO] main: 🎯 COUNTED: FACE-20260429-0002 — count=1
+2026-04-29 06:46:08 [INFO] database: Person registered: FACE-20260429-0003
+2026-04-29 06:46:08 [INFO] face_identity: Registered new face ID: FACE-20260429-0003
+2026-04-29 06:46:08 [INFO] database: Attendance started: FACE-20260429-0003 on 2026-04-29 at 06:46:08 | confidence=100.00%
+2026-04-29 06:46:08 [INFO] attendance: ✅ COUNTED: FACE-20260429-0003 | count=1 | confidence=100.00% | time=06:46:08
+2026-04-29 06:46:08 [INFO] main: 🎯 COUNTED: FACE-20260429-0003 — count=1
+2026-04-29 06:46:12 [INFO] database: Person registered: FACE-20260429-0004
+2026-04-29 06:46:12 [INFO] face_identity: Registered new face ID: FACE-20260429-0004
+2026-04-29 06:46:12 [INFO] database: Attendance started: FACE-20260429-0004 on 2026-04-29 at 06:46:12 | confidence=100.00%
+2026-04-29 06:46:12 [INFO] attendance: ✅ COUNTED: FACE-20260429-0004 | count=1 | confidence=100.00% | time=06:46:12
+2026-04-29 06:46:12 [INFO] main: 🎯 COUNTED: FACE-20260429-0004 — count=1
+2026-04-29 06:46:18 [INFO] database: Attendance started: FACE-20260428-0001 on 2026-04-29 at 06:46:18 | confidence=49.74%
+2026-04-29 06:46:18 [INFO] attendance: ✅ COUNTED: FACE-20260428-0001 | count=1 | confidence=49.74% | time=06:46:18
+2026-04-29 06:46:18 [INFO] main: 🎯 COUNTED: FACE-20260428-0001 — count=1
+2026-04-29 06:46:32 [INFO] database: Person registered: FACE-20260429-0005
+2026-04-29 06:46:32 [INFO] face_identity: Registered new face ID: FACE-20260429-0005
+2026-04-29 06:46:32 [INFO] database: Attendance started: FACE-20260429-0005 on 2026-04-29 at 06:46:32 | confidence=100.00%
+2026-04-29 06:46:32 [INFO] attendance: ✅ COUNTED: FACE-20260429-0005 | count=1 | confidence=100.00% | time=06:46:32
+2026-04-29 06:46:32 [INFO] main: 🎯 COUNTED: FACE-20260429-0005 — count=1
+2026-04-29 06:46:51 [WARNING] camera: Failed to read frame from camera
+2026-04-29 06:46:51 [INFO] main: 
+Cleaning up...
+2026-04-29 06:46:51 [INFO] camera: Camera released
+2026-04-29 06:46:51 [INFO] attendance: =======================================================
+2026-04-29 06:46:51 [INFO] attendance:   ATTENDANCE SUMMARY — 2026-04-29
+2026-04-29 06:46:51 [INFO] attendance: =======================================================
+2026-04-29 06:46:51 [INFO] attendance:   Attendance count     : 6
+2026-04-29 06:46:51 [INFO] attendance:   Unique faces         : 6
+2026-04-29 06:46:51 [INFO] attendance:   Session counted      : 6
+2026-04-29 06:46:51 [INFO] attendance:   Debounced sightings  : 27
+2026-04-29 06:46:51 [INFO] attendance:   Unknown faces seen   : 31
+2026-04-29 06:46:51 [INFO] attendance: -------------------------------------------------------
+2026-04-29 06:46:51 [INFO] attendance:   Attendance log:
+2026-04-29 06:46:51 [INFO] attendance:     06:45:45  FACE-20260429-0001    count=1    last=06:45:45
+2026-04-29 06:46:51 [INFO] attendance:     06:45:58  FACE-20260429-0002    count=1    last=06:45:58
+2026-04-29 06:46:51 [INFO] attendance:     06:46:08  FACE-20260429-0003    count=1    last=06:46:08
+2026-04-29 06:46:51 [INFO] attendance:     06:46:12  FACE-20260429-0004    count=1    last=06:46:12
+2026-04-29 06:46:51 [INFO] attendance:     06:46:18  FACE-20260428-0001    count=1    last=06:46:18
+2026-04-29 06:46:51 [INFO] attendance:     06:46:32  FACE-20260429-0005    count=1    last=06:46:32
+2026-04-29 06:46:51 [INFO] attendance: =======================================================
+2026-04-29 06:46:51 [INFO] main: 
+============================================================
+2026-04-29 06:46:51 [INFO] main:   Attendance system stopped cleanly.
+2026-04-29 06:46:51 [INFO] main: ============================================================
+2026-04-29 06:48:41 [INFO] main: ============================================================
+2026-04-29 06:48:41 [INFO] main:   Face Recognition Attendance Management System
+2026-04-29 06:48:41 [INFO] main: ============================================================
+2026-04-29 06:48:41 [INFO] main:   Started: 2026-04-29 06:48:41
+2026-04-29 06:48:41 [INFO] main:   Base dir: /Users/limburoshan/Code/college/atnd_py/abijeet
+2026-04-29 06:48:41 [INFO] main: Running pre-flight checks...
+2026-04-29 06:48:41 [INFO] main:   ✅ attendance.db
+2026-04-29 06:48:41 [INFO] main: All pre-flight checks passed.
+
+2026-04-29 06:48:41 [INFO] main: Initializing system components...
+2026-04-29 06:48:41 [INFO] database: Database verified at: /Users/limburoshan/Code/college/atnd_py/abijeet/attendance.db
+2026-04-29 06:48:41 [INFO] main: ✅ Database connected
+2026-04-29 06:48:41 [INFO] memory: Memory loaded from memory_2026-04-29.txt: 6 persons already marked today
+2026-04-29 06:48:41 [INFO] main: ✅ Daily memory loaded
+2026-04-29 06:48:44 [WARNING] detector: Could not load yolov8n-face.pt: [Errno 2] No such file or directory: 'yolov8n-face.pt'
+2026-04-29 06:48:44 [INFO] detector: Using OpenCV face detector fallback
+2026-04-29 06:48:44 [INFO] detector: OpenCV Haar face detector loaded with validation filters
+2026-04-29 06:48:45 [INFO] detector: dlib HOG face detector loaded via face_recognition
+2026-04-29 06:48:45 [INFO] detector: MediaPipe alignment disabled; using direct face crops
+2026-04-29 06:48:45 [INFO] main: ✅ Face detector ready
+2026-04-29 06:48:45 [INFO] face_identity: Face identity cache loaded: 6 known faces
+2026-04-29 06:48:45 [INFO] main: ✅ Face identity manager ready
+2026-04-29 06:48:45 [INFO] attendance: AttendanceRecorder initialized.
+2026-04-29 06:48:45 [INFO] main: ✅ Attendance recorder ready
+2026-04-29 06:48:45 [INFO] main: 
+System ready. Starting live feed...
+2026-04-29 06:48:45 [INFO] main: Press Q in the camera window to quit.
+
+2026-04-29 06:48:47 [INFO] camera: Camera opened at index 0
+2026-04-29 06:49:33 [INFO] database: Person registered: FACE-20260429-0006
+2026-04-29 06:49:33 [INFO] face_identity: Registered new face ID: FACE-20260429-0006
+2026-04-29 06:49:33 [INFO] database: Attendance started: FACE-20260429-0006 on 2026-04-29 at 06:49:33 | confidence=100.00%
+2026-04-29 06:49:33 [INFO] attendance: ✅ COUNTED: FACE-20260429-0006 | count=1 | confidence=100.00% | time=06:49:33
+2026-04-29 06:49:33 [INFO] main: 🎯 COUNTED: FACE-20260429-0006 — count=1
+2026-04-29 06:50:51 [INFO] database: Person registered: FACE-20260429-0007
+2026-04-29 06:50:51 [INFO] face_identity: Registered new face ID: FACE-20260429-0007
+2026-04-29 06:50:51 [INFO] database: Attendance started: FACE-20260429-0007 on 2026-04-29 at 06:50:51 | confidence=100.00%
+2026-04-29 06:50:51 [INFO] attendance: ✅ COUNTED: FACE-20260429-0007 | count=1 | confidence=100.00% | time=06:50:51
+2026-04-29 06:50:51 [INFO] main: 🎯 COUNTED: FACE-20260429-0007 — count=1
+2026-04-29 06:51:12 [INFO] database: Attendance count incremented: FACE-20260429-0004 on 2026-04-29 at 06:51:12 | count=2
+2026-04-29 06:51:12 [INFO] attendance: ✅ COUNTED: FACE-20260429-0004 | count=2 | confidence=77.94% | time=06:51:12
+2026-04-29 06:51:12 [INFO] main: 🎯 COUNTED: FACE-20260429-0004 — count=2
+2026-04-29 06:51:24 [INFO] database: Attendance count incremented: FACE-20260429-0001 on 2026-04-29 at 06:51:24 | count=2
+2026-04-29 06:51:24 [INFO] attendance: ✅ COUNTED: FACE-20260429-0001 | count=2 | confidence=58.07% | time=06:51:24
+2026-04-29 06:51:24 [INFO] main: 🎯 COUNTED: FACE-20260429-0001 — count=2
+2026-04-29 06:52:21 [INFO] main: 
+Keyboard interrupt received. Shutting down...
+2026-04-29 06:52:21 [INFO] main: 
+Cleaning up...
+2026-04-29 06:52:21 [INFO] camera: Camera released
+2026-04-29 06:52:21 [INFO] attendance: =======================================================
+2026-04-29 06:52:21 [INFO] attendance:   ATTENDANCE SUMMARY — 2026-04-29
+2026-04-29 06:52:21 [INFO] attendance: =======================================================
+2026-04-29 06:52:21 [INFO] attendance:   Attendance count     : 10
+2026-04-29 06:52:21 [INFO] attendance:   Unique faces         : 8
+2026-04-29 06:52:21 [INFO] attendance:   Session counted      : 4
+2026-04-29 06:52:21 [INFO] attendance:   Debounced sightings  : 265
+2026-04-29 06:52:21 [INFO] attendance:   Unknown faces seen   : 52
+2026-04-29 06:52:21 [INFO] attendance: -------------------------------------------------------
+2026-04-29 06:52:21 [INFO] attendance:   Attendance log:
+2026-04-29 06:52:21 [INFO] attendance:     06:45:45  FACE-20260429-0001    count=2    last=06:51:24
+2026-04-29 06:52:21 [INFO] attendance:     06:45:58  FACE-20260429-0002    count=1    last=06:45:58
+2026-04-29 06:52:21 [INFO] attendance:     06:46:08  FACE-20260429-0003    count=1    last=06:46:08
+2026-04-29 06:52:21 [INFO] attendance:     06:46:12  FACE-20260429-0004    count=2    last=06:51:12
+2026-04-29 06:52:21 [INFO] attendance:     06:46:18  FACE-20260428-0001    count=1    last=06:46:18
+2026-04-29 06:52:21 [INFO] attendance:     06:46:32  FACE-20260429-0005    count=1    last=06:46:32
+2026-04-29 06:52:21 [INFO] attendance:     06:49:33  FACE-20260429-0006    count=1    last=06:49:33
+2026-04-29 06:52:21 [INFO] attendance:     06:50:51  FACE-20260429-0007    count=1    last=06:50:51
+2026-04-29 06:52:21 [INFO] attendance: =======================================================
+2026-04-29 06:52:21 [INFO] main: 
+============================================================
+2026-04-29 06:52:21 [INFO] main:   Attendance system stopped cleanly.
+2026-04-29 06:52:21 [INFO] main: ============================================================
+2026-04-29 07:32:40 [INFO] main: ============================================================
+2026-04-29 07:32:40 [INFO] main:   Face Recognition Attendance Management System
+2026-04-29 07:32:40 [INFO] main: ============================================================
+2026-04-29 07:32:40 [INFO] main:   Started: 2026-04-29 07:32:40
+2026-04-29 07:32:40 [INFO] main:   Base dir: /Users/limburoshan/Code/college/atnd_py/abijeet
+2026-04-29 07:32:40 [INFO] main: Running pre-flight checks...
+2026-04-29 07:32:40 [INFO] main:   ✅ attendance.db
+2026-04-29 07:32:40 [INFO] main: All pre-flight checks passed.
+
+2026-04-29 07:32:40 [INFO] main: Initializing system components...
+2026-04-29 07:32:40 [INFO] database: Database verified at: /Users/limburoshan/Code/college/atnd_py/abijeet/attendance.db
+2026-04-29 07:32:40 [INFO] main: ✅ Database connected
+2026-04-29 07:32:40 [INFO] memory: Memory loaded from memory_2026-04-29.txt: 8 persons already marked today
+2026-04-29 07:32:40 [INFO] main: ✅ Daily memory loaded
+2026-04-29 07:32:43 [WARNING] detector: Could not load yolov8n-face.pt: [Errno 2] No such file or directory: 'yolov8n-face.pt'
+2026-04-29 07:32:43 [INFO] detector: Using OpenCV face detector fallback
+2026-04-29 07:32:43 [INFO] detector: OpenCV Haar face detector loaded with validation filters
+2026-04-29 07:32:44 [INFO] detector: dlib HOG face detector loaded via face_recognition
+2026-04-29 07:32:44 [INFO] detector: MediaPipe alignment disabled; using direct face crops
+2026-04-29 07:32:44 [INFO] main: ✅ Face detector ready
+2026-04-29 07:32:44 [INFO] face_identity: Face identity cache loaded: 8 known faces
+2026-04-29 07:32:44 [INFO] main: ✅ Face identity manager ready
+2026-04-29 07:32:44 [INFO] attendance: AttendanceRecorder initialized.
+2026-04-29 07:32:44 [INFO] main: ✅ Attendance recorder ready
+2026-04-29 07:32:44 [INFO] main: 
+System ready. Starting live feed...
+2026-04-29 07:32:44 [INFO] main: Press Q in the camera window to quit.
+
+2026-04-29 07:32:47 [INFO] camera: Camera opened at index 0
+2026-04-29 07:33:02 [WARNING] camera: Failed to read frame from camera
+2026-04-29 07:33:02 [INFO] main: 
+Cleaning up...
+2026-04-29 07:33:03 [INFO] camera: Camera released
+2026-04-29 07:33:03 [INFO] attendance: =======================================================
+2026-04-29 07:33:03 [INFO] attendance:   ATTENDANCE SUMMARY — 2026-04-29
+2026-04-29 07:33:03 [INFO] attendance: =======================================================
+2026-04-29 07:33:03 [INFO] attendance:   Attendance count     : 10
+2026-04-29 07:33:03 [INFO] attendance:   Unique faces         : 8
+2026-04-29 07:33:03 [INFO] attendance:   Session counted      : 0
+2026-04-29 07:33:03 [INFO] attendance:   Debounced sightings  : 0
+2026-04-29 07:33:03 [INFO] attendance:   Unknown faces seen   : 0
+2026-04-29 07:33:03 [INFO] attendance: -------------------------------------------------------
+2026-04-29 07:33:03 [INFO] attendance:   Attendance log:
+2026-04-29 07:33:03 [INFO] attendance:     06:45:45  FACE-20260429-0001    count=2    last=06:51:24
+2026-04-29 07:33:03 [INFO] attendance:     06:45:58  FACE-20260429-0002    count=1    last=06:45:58
+2026-04-29 07:33:03 [INFO] attendance:     06:46:08  FACE-20260429-0003    count=1    last=06:46:08
+2026-04-29 07:33:03 [INFO] attendance:     06:46:12  FACE-20260429-0004    count=2    last=06:51:12
+2026-04-29 07:33:03 [INFO] attendance:     06:46:18  FACE-20260428-0001    count=1    last=06:46:18
+2026-04-29 07:33:03 [INFO] attendance:     06:46:32  FACE-20260429-0005    count=1    last=06:46:32
+2026-04-29 07:33:03 [INFO] attendance:     06:49:33  FACE-20260429-0006    count=1    last=06:49:33
+2026-04-29 07:33:03 [INFO] attendance:     06:50:51  FACE-20260429-0007    count=1    last=06:50:51
+2026-04-29 07:33:03 [INFO] attendance: =======================================================
+2026-04-29 07:33:03 [INFO] main: 
+============================================================
+2026-04-29 07:33:03 [INFO] main:   Attendance system stopped cleanly.
+2026-04-29 07:33:03 [INFO] main: ============================================================
+2026-04-29 07:33:05 [INFO] main: ============================================================
+2026-04-29 07:33:05 [INFO] main:   Face Recognition Attendance Management System
+2026-04-29 07:33:05 [INFO] main: ============================================================
+2026-04-29 07:33:05 [INFO] main:   Started: 2026-04-29 07:33:05
+2026-04-29 07:33:05 [INFO] main:   Base dir: /Users/limburoshan/Code/college/atnd_py/abijeet
+2026-04-29 07:33:05 [INFO] main: Running pre-flight checks...
+2026-04-29 07:33:05 [INFO] main:   ✅ attendance.db
+2026-04-29 07:33:05 [INFO] main: All pre-flight checks passed.
+
+2026-04-29 07:33:05 [INFO] main: Initializing system components...
+2026-04-29 07:33:05 [INFO] database: Database verified at: /Users/limburoshan/Code/college/atnd_py/abijeet/attendance.db
+2026-04-29 07:33:05 [INFO] main: ✅ Database connected
+2026-04-29 07:33:05 [INFO] memory: Memory loaded from memory_2026-04-29.txt: 8 persons already marked today
+2026-04-29 07:33:05 [INFO] main: ✅ Daily memory loaded
+2026-04-29 07:33:08 [WARNING] detector: Could not load yolov8n-face.pt: [Errno 2] No such file or directory: 'yolov8n-face.pt'
+2026-04-29 07:33:08 [INFO] detector: Using OpenCV face detector fallback
+2026-04-29 07:33:08 [INFO] detector: OpenCV Haar face detector loaded with validation filters
+2026-04-29 07:33:09 [INFO] detector: dlib HOG face detector loaded via face_recognition
+2026-04-29 07:33:09 [INFO] detector: MediaPipe alignment disabled; using direct face crops
+2026-04-29 07:33:09 [INFO] main: ✅ Face detector ready
+2026-04-29 07:33:09 [INFO] face_identity: Face identity cache loaded: 8 known faces
+2026-04-29 07:33:09 [INFO] main: ✅ Face identity manager ready
+2026-04-29 07:33:09 [INFO] attendance: AttendanceRecorder initialized.
+2026-04-29 07:33:09 [INFO] main: ✅ Attendance recorder ready
+2026-04-29 07:33:09 [INFO] main: 
+System ready. Starting live feed...
+2026-04-29 07:33:09 [INFO] main: Press Q in the camera window to quit.
+
+2026-04-29 07:33:11 [INFO] camera: Camera opened at index 0
+2026-04-29 07:33:13 [INFO] database: Attendance count incremented: FACE-20260429-0004 on 2026-04-29 at 07:33:13 | count=3
+2026-04-29 07:33:13 [INFO] attendance: ✅ COUNTED: FACE-20260429-0004 | count=3 | confidence=76.43% | time=07:33:13
+2026-04-29 07:33:13 [INFO] main: 🎯 COUNTED: FACE-20260429-0004 — count=3
+2026-04-29 07:33:17 [INFO] database: Attendance count incremented: FACE-20260429-0001 on 2026-04-29 at 07:33:17 | count=3
+2026-04-29 07:33:17 [INFO] attendance: ✅ COUNTED: FACE-20260429-0001 | count=3 | confidence=69.07% | time=07:33:17
+2026-04-29 07:33:17 [INFO] main: 🎯 COUNTED: FACE-20260429-0001 — count=3
+2026-04-29 07:33:20 [INFO] database: Attendance count incremented: FACE-20260429-0002 on 2026-04-29 at 07:33:20 | count=2
+2026-04-29 07:33:20 [INFO] attendance: ✅ COUNTED: FACE-20260429-0002 | count=2 | confidence=65.44% | time=07:33:20
+2026-04-29 07:33:20 [INFO] main: 🎯 COUNTED: FACE-20260429-0002 — count=2
+2026-04-29 07:33:35 [INFO] database: Attendance count incremented: FACE-20260429-0003 on 2026-04-29 at 07:33:35 | count=2
+2026-04-29 07:33:35 [INFO] attendance: ✅ COUNTED: FACE-20260429-0003 | count=2 | confidence=48.39% | time=07:33:35
+2026-04-29 07:33:35 [INFO] main: 🎯 COUNTED: FACE-20260429-0003 — count=2
+2026-04-29 07:35:59 [INFO] main: 
+Keyboard interrupt received. Shutting down...
+2026-04-29 07:35:59 [INFO] main: 
+Cleaning up...
+2026-04-29 07:35:59 [INFO] camera: Camera released
+2026-04-29 07:35:59 [INFO] attendance: =======================================================
+2026-04-29 07:35:59 [INFO] attendance:   ATTENDANCE SUMMARY — 2026-04-29
+2026-04-29 07:35:59 [INFO] attendance: =======================================================
+2026-04-29 07:35:59 [INFO] attendance:   Attendance count     : 14
+2026-04-29 07:35:59 [INFO] attendance:   Unique faces         : 8
+2026-04-29 07:35:59 [INFO] attendance:   Session counted      : 4
+2026-04-29 07:35:59 [INFO] attendance:   Debounced sightings  : 242
+2026-04-29 07:35:59 [INFO] attendance:   Unknown faces seen   : 109
+2026-04-29 07:35:59 [INFO] attendance: -------------------------------------------------------
+2026-04-29 07:35:59 [INFO] attendance:   Attendance log:
+2026-04-29 07:35:59 [INFO] attendance:     06:45:45  FACE-20260429-0001    count=3    last=07:33:17
+2026-04-29 07:35:59 [INFO] attendance:     06:45:58  FACE-20260429-0002    count=2    last=07:33:20
+2026-04-29 07:35:59 [INFO] attendance:     06:46:08  FACE-20260429-0003    count=2    last=07:33:35
+2026-04-29 07:35:59 [INFO] attendance:     06:46:12  FACE-20260429-0004    count=3    last=07:33:13
+2026-04-29 07:35:59 [INFO] attendance:     06:46:18  FACE-20260428-0001    count=1    last=06:46:18
+2026-04-29 07:35:59 [INFO] attendance:     06:46:32  FACE-20260429-0005    count=1    last=06:46:32
+2026-04-29 07:35:59 [INFO] attendance:     06:49:33  FACE-20260429-0006    count=1    last=06:49:33
+2026-04-29 07:35:59 [INFO] attendance:     06:50:51  FACE-20260429-0007    count=1    last=06:50:51
+2026-04-29 07:35:59 [INFO] attendance: =======================================================
+2026-04-29 07:35:59 [INFO] main: 
+============================================================
+2026-04-29 07:35:59 [INFO] main:   Attendance system stopped cleanly.
+2026-04-29 07:35:59 [INFO] main: ============================================================
+2026-04-29 07:42:52 [INFO] main: ============================================================
+2026-04-29 07:42:52 [INFO] main:   Face Recognition Attendance Management System
+2026-04-29 07:42:52 [INFO] main: ============================================================
+2026-04-29 07:42:52 [INFO] main:   Started: 2026-04-29 07:42:52
+2026-04-29 07:42:52 [INFO] main:   Base dir: /Users/limburoshan/Code/college/atnd_py/abijeet
+2026-04-29 07:42:52 [INFO] main: Running pre-flight checks...
+2026-04-29 07:42:52 [INFO] main:   ✅ attendance.db
+2026-04-29 07:42:52 [INFO] main: All pre-flight checks passed.
+
+2026-04-29 07:42:52 [INFO] main: Initializing system components...
+2026-04-29 07:42:52 [INFO] database: Database verified at: /Users/limburoshan/Code/college/atnd_py/abijeet/attendance.db
+2026-04-29 07:42:52 [INFO] main: ✅ Database connected
+2026-04-29 07:42:52 [INFO] memory: Memory loaded from memory_2026-04-29.txt: 8 persons already marked today
+2026-04-29 07:42:52 [INFO] main: ✅ Daily memory loaded
+2026-04-29 07:42:56 [WARNING] detector: Could not load yolov8n-face.pt: [Errno 2] No such file or directory: 'yolov8n-face.pt'
+2026-04-29 07:42:56 [INFO] detector: Using OpenCV face detector fallback
+2026-04-29 07:42:56 [INFO] detector: OpenCV Haar face detector loaded with validation filters
+2026-04-29 07:42:57 [INFO] detector: dlib HOG face detector loaded via face_recognition
+2026-04-29 07:42:57 [INFO] detector: MediaPipe alignment disabled; using direct face crops
+2026-04-29 07:42:57 [INFO] main: ✅ Face detector ready
+2026-04-29 07:42:57 [INFO] face_identity: Face identity cache loaded: 8 known faces
+2026-04-29 07:42:57 [INFO] main: ✅ Face identity manager ready
+2026-04-29 07:42:57 [INFO] attendance: AttendanceRecorder initialized.
+2026-04-29 07:42:57 [INFO] main: ✅ Attendance recorder ready
+2026-04-29 07:42:57 [INFO] main: 
+System ready. Starting live feed...
+2026-04-29 07:42:57 [INFO] main: Press Q in the camera window to quit.
+
+2026-04-29 07:42:58 [INFO] camera: Camera opened at index 0
+2026-04-29 07:43:01 [INFO] database: Attendance count incremented: FACE-20260429-0004 on 2026-04-29 at 07:43:01 | count=4
+2026-04-29 07:43:01 [INFO] attendance: ✅ COUNTED: FACE-20260429-0004 | count=4 | confidence=78.19% | time=07:43:01 | photo=attendance_photos/2026-04-29/074301_FACE-20260429-0004_count-4_conf-078.jpg
+2026-04-29 07:43:01 [INFO] main: 🎯 COUNTED: FACE-20260429-0004 — count=4
+2026-04-29 07:43:14 [INFO] database: Attendance count incremented: FACE-20260429-0001 on 2026-04-29 at 07:43:14 | count=4
+2026-04-29 07:43:14 [INFO] attendance: ✅ COUNTED: FACE-20260429-0001 | count=4 | confidence=47.64% | time=07:43:14 | photo=attendance_photos/2026-04-29/074314_FACE-20260429-0001_count-4_conf-047.jpg
+2026-04-29 07:43:14 [INFO] main: 🎯 COUNTED: FACE-20260429-0001 — count=4
+2026-04-29 07:43:23 [INFO] database: Attendance count incremented: FACE-20260428-0001 on 2026-04-29 at 07:43:23 | count=2
+2026-04-29 07:43:23 [INFO] attendance: ✅ COUNTED: FACE-20260428-0001 | count=2 | confidence=66.75% | time=07:43:23 | photo=attendance_photos/2026-04-29/074323_FACE-20260428-0001_count-2_conf-066.jpg
+2026-04-29 07:43:23 [INFO] main: 🎯 COUNTED: FACE-20260428-0001 — count=2
+2026-04-29 07:43:32 [INFO] database: Attendance count incremented: FACE-20260429-0006 on 2026-04-29 at 07:43:32 | count=2
+2026-04-29 07:43:32 [INFO] attendance: ✅ COUNTED: FACE-20260429-0006 | count=2 | confidence=60.38% | time=07:43:32 | photo=attendance_photos/2026-04-29/074332_FACE-20260429-0006_count-2_conf-060.jpg
+2026-04-29 07:43:32 [INFO] main: 🎯 COUNTED: FACE-20260429-0006 — count=2
+2026-04-29 07:43:33 [INFO] database: Attendance count incremented: FACE-20260429-0002 on 2026-04-29 at 07:43:33 | count=3
+2026-04-29 07:43:33 [INFO] attendance: ✅ COUNTED: FACE-20260429-0002 | count=3 | confidence=72.54% | time=07:43:33 | photo=attendance_photos/2026-04-29/074333_FACE-20260429-0002_count-3_conf-072.jpg
+2026-04-29 07:43:33 [INFO] main: 🎯 COUNTED: FACE-20260429-0002 — count=3
+2026-04-29 07:44:30 [INFO] main: 
+Keyboard interrupt received. Shutting down...
+2026-04-29 07:44:30 [INFO] main: 
+Cleaning up...
+2026-04-29 07:44:30 [INFO] camera: Camera released
+2026-04-29 07:44:30 [INFO] attendance: =======================================================
+2026-04-29 07:44:30 [INFO] attendance:   ATTENDANCE SUMMARY — 2026-04-29
+2026-04-29 07:44:30 [INFO] attendance: =======================================================
+2026-04-29 07:44:30 [INFO] attendance:   Attendance count     : 19
+2026-04-29 07:44:30 [INFO] attendance:   Unique faces         : 8
+2026-04-29 07:44:30 [INFO] attendance:   Session counted      : 5
+2026-04-29 07:44:30 [INFO] attendance:   Debounced sightings  : 100
+2026-04-29 07:44:30 [INFO] attendance:   Unknown faces seen   : 34
+2026-04-29 07:44:30 [INFO] attendance: -------------------------------------------------------
+2026-04-29 07:44:30 [INFO] attendance:   Attendance log:
+2026-04-29 07:44:30 [INFO] attendance:     06:45:45  FACE-20260429-0001    count=4    last=07:43:14
+2026-04-29 07:44:30 [INFO] attendance:     06:45:58  FACE-20260429-0002    count=3    last=07:43:33
+2026-04-29 07:44:30 [INFO] attendance:     06:46:08  FACE-20260429-0003    count=2    last=07:33:35
+2026-04-29 07:44:30 [INFO] attendance:     06:46:12  FACE-20260429-0004    count=4    last=07:43:01
+2026-04-29 07:44:30 [INFO] attendance:     06:46:18  FACE-20260428-0001    count=2    last=07:43:23
+2026-04-29 07:44:30 [INFO] attendance:     06:46:32  FACE-20260429-0005    count=1    last=06:46:32
+2026-04-29 07:44:30 [INFO] attendance:     06:49:33  FACE-20260429-0006    count=2    last=07:43:32
+2026-04-29 07:44:30 [INFO] attendance:     06:50:51  FACE-20260429-0007    count=1    last=06:50:51
+2026-04-29 07:44:30 [INFO] attendance: =======================================================
+2026-04-29 07:44:30 [INFO] main: 
+============================================================
+2026-04-29 07:44:30 [INFO] main:   Attendance system stopped cleanly.
+2026-04-29 07:44:30 [INFO] main: ============================================================
