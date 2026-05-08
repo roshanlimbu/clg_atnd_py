@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.venv/
+.cache/
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Generated / runtime data
+attendance_memory/
+attendance_photos/
+internal_team_photos/
+logs/
+converted_model/
+
+# Large model files
+*.pt
+*.h5
+*.pth

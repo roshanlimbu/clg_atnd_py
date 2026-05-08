@@ -1,0 +1,351 @@
+"""
+========================================================
+attendance.py — Attendance Recording Orchestrator
+========================================================
+STEP 11 + STEP 12 + STEP 13 + STEP 15
+
+Coordinates the full attendance pipeline for each recognized face:
+
+1. Layer 1 check — memory file (fast, survives restarts)
+2. Layer 2 insert — SQLite database (with UNIQUE constraint)
+3. Memory update  — write to today's file immediately after DB insert
+4. Visual status  — determine color/label for live feed overlay
+========================================================
+"""
+
+import logging
+from datetime import datetime
+from pathlib import Path
+from typing import List, Optional
+
+import cv2
+import numpy as np
+
+from database import DatabaseManager
+from face_identity import FaceIdentityResult
+from memory import MemoryManager
+
+logger = logging.getLogger(__name__)
+
+
+# Status constants for visual overlay
+STATUS_MARKED          = "marked"          # Successfully marked (green)
+STATUS_ALREADY_MARKED  = "already_marked"  # Debounced inside the time window (yellow)
+STATUS_UNKNOWN         = "unknown"         # Unknown face (red)
+STATUS_LOW_CONFIDENCE  = "low_confidence"  # Below threshold (gray)
+STATUS_INTERNAL        = "internal"        # Internal team member (blue, not counted)
+
+DEBOUNCE_MINUTES = 5
+
+
+class AttendanceResult:
+    """Result of processing one detected face through the attendance pipeline."""
+
+    def __init__(
+        self,
+        person_id: str,
+        confidence: float,
+        status: str,
+        count: int = 0,
+        display_name: Optional[str] = None,
+    ):
+        self.person_id = person_id
+        self.confidence = confidence
+        self.status = status
+        self.count = count
+        self.display_name = display_name
+
+    def as_dict(self) -> dict:
+        """Convert to dict for use with detector.draw_detections()."""
+        return {
+            "person_id": self.person_id,
+            "confidence": self.confidence,
+            "status": self.status,
+            "count": self.count,
+            "display_name": self.display_name,
+        }
+
+    def __repr__(self):
+        return (
+            f"AttendanceResult("
+            f"person_id={self.person_id!r}, "
+            f"confidence={self.confidence:.2%}, "
+            f"status={self.status!r}, "
+            f"count={self.count!r})"
+        )
+
+
+class AttendanceRecorder:
+    """
+    STEP 11 + 12 + 13 + 15 — Orchestrates the full attendance pipeline.
+
+    Takes recognition results and coordinates:
+        - Duplicate checking (Layer 1: memory file)
+        - Database recording (Layer 2: UNIQUE constraint backup)
+        - Memory file updating
+        - Midnight rollover for multi-day continuous operation
+    """
+
+    def __init__(
+        self,
+        db_manager: DatabaseManager,
+        memory_manager: MemoryManager,
+        photos_dir: Optional[Path] = None,
+    ):
+        """
+        Args:
+            db_manager    : Initialized DatabaseManager instance
+            memory_manager: Initialized MemoryManager instance
+        """
+        self.db = db_manager
+        self.memory = memory_manager
+        self.photos_dir = photos_dir
+        if self.photos_dir is not None:
+            self.photos_dir.mkdir(parents=True, exist_ok=True)
+
+        # Session statistics
+        self._session_marked_count: int = 0
+        self._session_duplicate_count: int = 0
+        self._session_unknown_count: int = 0
+
+        logger.info("AttendanceRecorder initialized.")
+
+    def process_recognition(
+        self,
+        recognition: FaceIdentityResult,
+        face_image: Optional[np.ndarray] = None,
+    ) -> AttendanceResult:
+        """
+        STEPS 11 + 12 + 13 — Process a single face recognition result.
+
+        Pipeline:
+        1. Unknown/low confidence → return immediately with appropriate status
+        2. Layer 1 check (memory file) → already marked? return already_marked
+        3. Layer 2 insert (database) → insert with UNIQUE constraint
+        4. Memory update → write to today's file immediately
+        5. Return status for visual overlay
+
+        Args:
+            recognition: FaceIdentityResult from FaceIdentityManager
+
+        Returns:
+            AttendanceResult with final status for display
+        """
+        # ── Handle Unknown / Low Confidence ──────────────────────────────
+        if recognition.is_unknown:
+            self._session_unknown_count += 1
+            return AttendanceResult(
+                person_id="Unknown",
+                confidence=recognition.confidence,
+                status=STATUS_UNKNOWN,
+            )
+
+        if not recognition.is_above_threshold:
+            return AttendanceResult(
+                person_id=recognition.person_id,
+                confidence=recognition.confidence,
+                status=STATUS_LOW_CONFIDENCE,
+                display_name=recognition.display_name,
+            )
+
+        person_id = recognition.person_id
+        confidence = recognition.confidence
+
+        if recognition.is_internal:
+            logger.debug(
+                "Internal team member ignored for attendance: %s",
+                recognition.display_name or person_id,
+            )
+            return AttendanceResult(
+                person_id=person_id,
+                confidence=confidence,
+                status=STATUS_INTERNAL,
+                display_name=recognition.display_name,
+            )
+
+        # ── STEP 12 — Record in SQLite Database ──────────────────────────
+        now = datetime.now()
+        db_action, count = self.db.record_attendance(
+            person_id=person_id,
+            confidence=confidence,
+            attendance_date=now.date(),
+            attendance_time=now,
+            debounce_minutes=DEBOUNCE_MINUTES,
+        )
+
+        if db_action == "debounced":
+            self._session_duplicate_count += 1
+            return AttendanceResult(
+                person_id=person_id,
+                confidence=confidence,
+                status=STATUS_ALREADY_MARKED,
+                count=count,
+                display_name=recognition.display_name,
+            )
+
+        if db_action == "error":
+            return AttendanceResult(
+                person_id=person_id,
+                confidence=confidence,
+                status=STATUS_LOW_CONFIDENCE,
+                count=count,
+                display_name=recognition.display_name,
+            )
+
+        # ── STEP 13 — Update Memory File ─────────────────────────────────
+        photo_path = self._save_attendance_photo(
+            person_id=person_id,
+            captured_at=now,
+            count=count,
+            confidence=confidence,
+            face_image=face_image,
+        )
+        if photo_path is not None:
+            self.db.record_attendance_photo(
+                person_id=person_id,
+                attendance_date=now.date(),
+                attendance_time=now,
+                count=count,
+                confidence=confidence,
+                image_path=photo_path,
+            )
+
+        self.memory.mark_person(person_id)
+        self._session_marked_count += 1
+
+        logger.info(
+            "COUNTED: %s | count=%s | confidence=%.2f%% | time=%s | photo=%s",
+            person_id, count, confidence * 100,
+            now.strftime("%H:%M:%S"), photo_path or "not saved",
+        )
+
+        return AttendanceResult(
+            person_id=person_id,
+            confidence=confidence,
+            status=STATUS_MARKED,
+            count=count,
+            display_name=recognition.display_name,
+        )
+
+    def process_frame_recognitions(
+        self,
+        recognitions: List[FaceIdentityResult],
+        face_images: Optional[List[np.ndarray]] = None,
+    ) -> List[AttendanceResult]:
+        """
+        Process all recognition results from a single frame.
+
+        Args:
+            recognitions: List of FaceIdentityResult objects (one per detected face)
+
+        Returns:
+            List of AttendanceResult objects (same order as input)
+        """
+        # STEP 15 — Check for midnight rollover before processing each frame
+        date_changed = self.memory.check_and_refresh_date()
+        if date_changed:
+            logger.info(
+                "New day detected during frame processing. "
+                "Attendance memory reset. All persons can be marked again."
+            )
+
+        results = []
+        for index, recognition in enumerate(recognitions):
+            face_image = None
+            if face_images is not None and index < len(face_images):
+                face_image = face_images[index]
+            result = self.process_recognition(recognition, face_image)
+            results.append(result)
+
+        return results
+
+    def _save_attendance_photo(
+        self,
+        person_id: str,
+        captured_at: datetime,
+        count: int,
+        confidence: float,
+        face_image: Optional[np.ndarray],
+    ) -> Optional[str]:
+        """Save the face crop for one counted attendance event."""
+        if self.photos_dir is None or face_image is None or face_image.size == 0:
+            return None
+
+        try:
+            date_dir = self.photos_dir / captured_at.date().isoformat()
+            date_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = captured_at.strftime("%H%M%S")
+            safe_person_id = "".join(
+                char if char.isalnum() or char in ("-", "_") else "_"
+                for char in person_id
+            )
+            filename = (
+                f"{timestamp}_{safe_person_id}_count-{count}_"
+                f"conf-{int(confidence * 100):03d}.jpg"
+            )
+            output_path = date_dir / filename
+
+            image = face_image
+            if image.dtype != np.uint8:
+                image = np.clip(image, 0, 255).astype(np.uint8)
+
+            if image.ndim == 3 and image.shape[2] == 3:
+                image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            else:
+                image_bgr = image
+
+            if not cv2.imwrite(str(output_path), image_bgr):
+                logger.warning("OpenCV did not save attendance photo: %s", output_path)
+                return None
+
+            return output_path.relative_to(self.photos_dir.parent).as_posix()
+        except Exception as exc:
+            logger.warning("Failed to save attendance photo for %s: %s", person_id, exc)
+            return None
+
+    def get_session_stats(self) -> dict:
+        """Return statistics for this program session."""
+        memory_status = self.memory.get_status_summary()
+        db_stats = self.db.get_statistics()
+
+        return {
+            # Session (since last restart)
+            "session_marked": self._session_marked_count,
+            "session_duplicates_blocked": self._session_duplicate_count,
+            "session_unknowns": self._session_unknown_count,
+
+            # Today (all-time today, from DB)
+            "today_total": db_stats["today_count"],
+            "today_date": memory_status["today"],
+
+            # All-time
+            "all_time_records": db_stats["all_time_records"] if "all_time_records" in db_stats else db_stats.get("all_time_count", 0),
+            "registered_persons": db_stats["total_persons"],
+        }
+
+    def print_session_summary(self):
+        """Print a formatted summary of today's attendance to the log."""
+        stats = self.get_session_stats()
+        records = self.db.get_today_attendance()
+
+        logger.info("=" * 55)
+        logger.info(f"  ATTENDANCE SUMMARY — {stats['today_date']}")
+        logger.info("=" * 55)
+        logger.info(f"  Attendance count     : {stats['today_total']}")
+        logger.info(f"  Unique faces         : {stats['registered_persons']}")
+        logger.info(f"  Session counted      : {stats['session_marked']}")
+        logger.info(f"  Debounced sightings  : {stats['session_duplicates_blocked']}")
+        logger.info(f"  Unknown faces seen   : {stats['session_unknowns']}")
+        logger.info("-" * 55)
+
+        if records:
+            logger.info("  Attendance log:")
+            for rec in records:
+                logger.info(
+                    f"    {rec['first_seen']}  {rec['person_id']:<20}  "
+                    f"count={rec['count']:<3}  last={rec['last_seen']}"
+                )
+        else:
+            logger.info("  No attendance records yet today.")
+
+        logger.info("=" * 55)
