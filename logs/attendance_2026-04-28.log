@@ -1,0 +1,156 @@
+2026-04-28 08:30:57 [INFO] main: ============================================================
+2026-04-28 08:30:57 [INFO] main:   Face Recognition Attendance Management System
+2026-04-28 08:30:57 [INFO] main: ============================================================
+2026-04-28 08:30:57 [INFO] main:   Started: 2026-04-28 08:30:57
+2026-04-28 08:30:57 [INFO] main:   Base dir: C:\Users\abije\Desktop\face detections
+2026-04-28 08:30:57 [INFO] main: Running pre-flight checks...
+2026-04-28 08:30:57 [ERROR] main:   ❌ MISSING: C:\Users\abije\Desktop\face detections\converted_model\model.h5
+2026-04-28 08:30:57 [ERROR] main:      → Converted model — run python convert_model.py
+2026-04-28 08:30:57 [INFO] main:   ✅ metadata.json
+2026-04-28 08:30:57 [INFO] main:   ✅ attendance.db
+2026-04-28 08:30:57 [ERROR] main: 
+Pre-flight checks failed. Fix the above issues and retry.
+2026-04-28 08:31:21 [INFO] main: ============================================================
+2026-04-28 08:31:21 [INFO] main:   Face Recognition Attendance Management System
+2026-04-28 08:31:21 [INFO] main: ============================================================
+2026-04-28 08:31:21 [INFO] main:   Started: 2026-04-28 08:31:21
+2026-04-28 08:31:21 [INFO] main:   Base dir: C:\Users\abije\Desktop\face detections
+2026-04-28 08:31:21 [INFO] main: Running pre-flight checks...
+2026-04-28 08:31:21 [ERROR] main:   ❌ MISSING: C:\Users\abije\Desktop\face detections\converted_model\model.h5
+2026-04-28 08:31:21 [ERROR] main:      → Converted model — run python convert_model.py
+2026-04-28 08:31:21 [INFO] main:   ✅ metadata.json
+2026-04-28 08:31:21 [INFO] main:   ✅ attendance.db
+2026-04-28 08:31:21 [ERROR] main: 
+Pre-flight checks failed. Fix the above issues and retry.
+2026-04-28 08:31:43 [INFO] main: ============================================================
+2026-04-28 08:31:43 [INFO] main:   Face Recognition Attendance Management System
+2026-04-28 08:31:43 [INFO] main: ============================================================
+2026-04-28 08:31:43 [INFO] main:   Started: 2026-04-28 08:31:43
+2026-04-28 08:31:43 [INFO] main:   Base dir: C:\Users\abije\Desktop\face detections
+2026-04-28 08:31:43 [INFO] main: Running pre-flight checks...
+2026-04-28 08:31:43 [ERROR] main:   ❌ MISSING: C:\Users\abije\Desktop\face detections\converted_model\model.h5
+2026-04-28 08:31:43 [ERROR] main:      → Converted model — run python convert_model.py
+2026-04-28 08:31:43 [INFO] main:   ✅ metadata.json
+2026-04-28 08:31:43 [INFO] main:   ✅ attendance.db
+2026-04-28 08:31:43 [ERROR] main: 
+Pre-flight checks failed. Fix the above issues and retry.
+2026-04-28 08:32:09 [INFO] main: ============================================================
+2026-04-28 08:32:09 [INFO] main:   Face Recognition Attendance Management System
+2026-04-28 08:32:09 [INFO] main: ============================================================
+2026-04-28 08:32:09 [INFO] main:   Started: 2026-04-28 08:32:09
+2026-04-28 08:32:09 [INFO] main:   Base dir: C:\Users\abije\Desktop\face detections
+2026-04-28 08:32:09 [INFO] main: Running pre-flight checks...
+2026-04-28 08:32:09 [ERROR] main:   ❌ MISSING: C:\Users\abije\Desktop\face detections\converted_model\model.h5
+2026-04-28 08:32:09 [ERROR] main:      → Converted model — run python convert_model.py
+2026-04-28 08:32:09 [INFO] main:   ✅ metadata.json
+2026-04-28 08:32:09 [INFO] main:   ✅ attendance.db
+2026-04-28 08:32:09 [ERROR] main: 
+Pre-flight checks failed. Fix the above issues and retry.
+2026-04-28 08:32:34 [INFO] main: ============================================================
+2026-04-28 08:32:34 [INFO] main:   Face Recognition Attendance Management System
+2026-04-28 08:32:34 [INFO] main: ============================================================
+2026-04-28 08:32:34 [INFO] main:   Started: 2026-04-28 08:32:34
+2026-04-28 08:32:34 [INFO] main:   Base dir: C:\Users\abije\Desktop\face detections
+2026-04-28 08:32:34 [INFO] main: Running pre-flight checks...
+2026-04-28 08:32:34 [ERROR] main:   ❌ MISSING: C:\Users\abije\Desktop\face detections\converted_model\model.h5
+2026-04-28 08:32:34 [ERROR] main:      → Converted model — run python convert_model.py
+2026-04-28 08:32:34 [INFO] main:   ✅ metadata.json
+2026-04-28 08:32:34 [INFO] main:   ✅ attendance.db
+2026-04-28 08:32:34 [ERROR] main: 
+Pre-flight checks failed. Fix the above issues and retry.
+2026-04-28 08:32:58 [INFO] main: ============================================================
+2026-04-28 08:32:58 [INFO] main:   Face Recognition Attendance Management System
+2026-04-28 08:32:58 [INFO] main: ============================================================
+2026-04-28 08:32:58 [INFO] main:   Started: 2026-04-28 08:32:58
+2026-04-28 08:32:58 [INFO] main:   Base dir: C:\Users\abije\Desktop\face detections
+2026-04-28 08:32:58 [INFO] main: Running pre-flight checks...
+2026-04-28 08:32:58 [ERROR] main:   ❌ MISSING: C:\Users\abije\Desktop\face detections\converted_model\model.h5
+2026-04-28 08:32:58 [ERROR] main:      → Converted model — run python convert_model.py
+2026-04-28 08:32:58 [INFO] main:   ✅ metadata.json
+2026-04-28 08:32:58 [INFO] main:   ✅ attendance.db
+2026-04-28 08:32:58 [ERROR] main: 
+Pre-flight checks failed. Fix the above issues and retry.
+2026-04-28 08:33:25 [INFO] main: ============================================================
+2026-04-28 08:33:25 [INFO] main:   Face Recognition Attendance Management System
+2026-04-28 08:33:25 [INFO] main: ============================================================
+2026-04-28 08:33:25 [INFO] main:   Started: 2026-04-28 08:33:25
+2026-04-28 08:33:25 [INFO] main:   Base dir: C:\Users\abije\Desktop\face detections
+2026-04-28 08:33:25 [INFO] main: Running pre-flight checks...
+2026-04-28 08:33:25 [ERROR] main:   ❌ MISSING: C:\Users\abije\Desktop\face detections\converted_model\model.h5
+2026-04-28 08:33:25 [ERROR] main:      → Converted model — run python convert_model.py
+2026-04-28 08:33:25 [INFO] main:   ✅ metadata.json
+2026-04-28 08:33:25 [INFO] main:   ✅ attendance.db
+2026-04-28 08:33:25 [ERROR] main: 
+Pre-flight checks failed. Fix the above issues and retry.
+2026-04-28 08:34:12 [INFO] main: ============================================================
+2026-04-28 08:34:12 [INFO] main:   Face Recognition Attendance Management System
+2026-04-28 08:34:12 [INFO] main: ============================================================
+2026-04-28 08:34:12 [INFO] main:   Started: 2026-04-28 08:34:12
+2026-04-28 08:34:12 [INFO] main:   Base dir: C:\Users\abije\Desktop\face detections
+2026-04-28 08:34:12 [INFO] main: Running pre-flight checks...
+2026-04-28 08:34:12 [ERROR] main:   ❌ MISSING: C:\Users\abije\Desktop\face detections\converted_model\model.h5
+2026-04-28 08:34:12 [ERROR] main:      → Converted model — run python convert_model.py
+2026-04-28 08:34:12 [INFO] main:   ✅ metadata.json
+2026-04-28 08:34:12 [INFO] main:   ✅ attendance.db
+2026-04-28 08:34:12 [ERROR] main: 
+Pre-flight checks failed. Fix the above issues and retry.
+2026-04-28 08:34:34 [INFO] main: ============================================================
+2026-04-28 08:34:34 [INFO] main:   Face Recognition Attendance Management System
+2026-04-28 08:34:34 [INFO] main: ============================================================
+2026-04-28 08:34:34 [INFO] main:   Started: 2026-04-28 08:34:34
+2026-04-28 08:34:34 [INFO] main:   Base dir: C:\Users\abije\Desktop\face detections
+2026-04-28 08:34:34 [INFO] main: Running pre-flight checks...
+2026-04-28 08:34:34 [ERROR] main:   ❌ MISSING: C:\Users\abije\Desktop\face detections\converted_model\model.h5
+2026-04-28 08:34:34 [ERROR] main:      → Converted model — run python convert_model.py
+2026-04-28 08:34:34 [INFO] main:   ✅ metadata.json
+2026-04-28 08:34:34 [INFO] main:   ✅ attendance.db
+2026-04-28 08:34:34 [ERROR] main: 
+Pre-flight checks failed. Fix the above issues and retry.
+2026-04-28 08:35:06 [INFO] main: ============================================================
+2026-04-28 08:35:06 [INFO] main:   Face Recognition Attendance Management System
+2026-04-28 08:35:06 [INFO] main: ============================================================
+2026-04-28 08:35:06 [INFO] main:   Started: 2026-04-28 08:35:06
+2026-04-28 08:35:06 [INFO] main:   Base dir: C:\Users\abije\Desktop\face detections
+2026-04-28 08:35:06 [INFO] main: Running pre-flight checks...
+2026-04-28 08:35:06 [ERROR] main:   ❌ MISSING: C:\Users\abije\Desktop\face detections\converted_model\model.h5
+2026-04-28 08:35:06 [ERROR] main:      → Converted model — run python convert_model.py
+2026-04-28 08:35:06 [INFO] main:   ✅ metadata.json
+2026-04-28 08:35:06 [INFO] main:   ✅ attendance.db
+2026-04-28 08:35:06 [ERROR] main: 
+Pre-flight checks failed. Fix the above issues and retry.
+2026-04-28 08:35:30 [INFO] main: ============================================================
+2026-04-28 08:35:30 [INFO] main:   Face Recognition Attendance Management System
+2026-04-28 08:35:30 [INFO] main: ============================================================
+2026-04-28 08:35:30 [INFO] main:   Started: 2026-04-28 08:35:30
+2026-04-28 08:35:30 [INFO] main:   Base dir: C:\Users\abije\Desktop\face detections
+2026-04-28 08:35:30 [INFO] main: Running pre-flight checks...
+2026-04-28 08:35:30 [ERROR] main:   ❌ MISSING: C:\Users\abije\Desktop\face detections\converted_model\model.h5
+2026-04-28 08:35:30 [ERROR] main:      → Converted model — run python convert_model.py
+2026-04-28 08:35:30 [INFO] main:   ✅ metadata.json
+2026-04-28 08:35:30 [INFO] main:   ✅ attendance.db
+2026-04-28 08:35:30 [ERROR] main: 
+Pre-flight checks failed. Fix the above issues and retry.
+2026-04-28 08:35:53 [INFO] main: ============================================================
+2026-04-28 08:35:53 [INFO] main:   Face Recognition Attendance Management System
+2026-04-28 08:35:53 [INFO] main: ============================================================
+2026-04-28 08:35:53 [INFO] main:   Started: 2026-04-28 08:35:53
+2026-04-28 08:35:53 [INFO] main:   Base dir: C:\Users\abije\Desktop\face detections
+2026-04-28 08:35:53 [INFO] main: Running pre-flight checks...
+2026-04-28 08:35:53 [ERROR] main:   ❌ MISSING: C:\Users\abije\Desktop\face detections\converted_model\model.h5
+2026-04-28 08:35:53 [ERROR] main:      → Converted model — run python convert_model.py
+2026-04-28 08:35:53 [INFO] main:   ✅ metadata.json
+2026-04-28 08:35:53 [INFO] main:   ✅ attendance.db
+2026-04-28 08:35:53 [ERROR] main: 
+Pre-flight checks failed. Fix the above issues and retry.
+2026-04-28 08:36:17 [INFO] main: ============================================================
+2026-04-28 08:36:17 [INFO] main:   Face Recognition Attendance Management System
+2026-04-28 08:36:17 [INFO] main: ============================================================
+2026-04-28 08:36:17 [INFO] main:   Started: 2026-04-28 08:36:17
+2026-04-28 08:36:17 [INFO] main:   Base dir: C:\Users\abije\Desktop\face detections
+2026-04-28 08:36:17 [INFO] main: Running pre-flight checks...
+2026-04-28 08:36:17 [ERROR] main:   ❌ MISSING: C:\Users\abije\Desktop\face detections\converted_model\model.h5
+2026-04-28 08:36:17 [ERROR] main:      → Converted model — run python convert_model.py
+2026-04-28 08:36:17 [INFO] main:   ✅ metadata.json
+2026-04-28 08:36:17 [INFO] main:   ✅ attendance.db
+2026-04-28 08:36:17 [ERROR] main: 
+Pre-flight checks failed. Fix the above issues and retry.
