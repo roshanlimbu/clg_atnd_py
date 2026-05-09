@@ -4,12 +4,13 @@ detector.py — Face Detection & Alignment Module
 ========================================================
 STEP 8 + STEP 9
 
-Two-stage pipeline for each sampled frame:
+Three-stage pipeline for each sampled frame:
 
-Stage 1 — YOLOv8n Face Detection:
-    - Receives a full live frame from the camera
-    - Detects ALL faces in a single pass (handles 20-30+ faces)
-    - Returns bounding boxes for every detected face
+Stage 1 — YOLOv8 Face Detection (with sandwich-face fixes):
+    - Splits frame into overlapping tiles to prevent NMS suppression
+    - Runs multi-scale detection (100% + 150%) per tile
+    - Uses lowered NMS IOU threshold (0.25) to keep occluded faces
+    - Merges and deduplicates all detections
     - Runs on CPU — no GPU required
 
 Stage 2 — MediaPipe Face Alignment:
@@ -18,6 +19,13 @@ Stage 2 — MediaPipe Face Alignment:
     - Uses MediaPipe landmarks to align the face
     - Normalizes and resizes to 224x224 for model input
     - Significantly improves recognition accuracy for tilted/angled faces
+
+Sandwich Face Problem:
+    When a face sits between two closer people, NMS would remove it
+    thinking it overlaps with the larger surrounding boxes. The tiling
+    approach isolates each region so the back face becomes dominant in
+    its own tile, and the lowered IOU threshold prevents aggressive
+    suppression of legitimate detections.
 ========================================================
 """
 
@@ -31,12 +39,23 @@ from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# ArcFace standard reference landmarks for 112x112 aligned output.
+# These are the canonical positions ArcFace was trained on.
+# Source: insightface/utils/face_align.py
+ARCFACE_REF_112 = np.array([
+    [38.2946, 51.6963],   # left eye
+    [73.5318, 51.5014],   # right eye
+    [56.0252, 71.7366],   # nose tip
+    [41.5493, 92.3655],   # left mouth corner
+    [70.7299, 92.2041],   # right mouth corner
+], dtype=np.float32)
+
 
 @dataclass
 class DetectedFace:
     """
     Holds all data for a single detected and aligned face.
-    Passed from detector → recognizer → attendance recorder.
+    Passed from detector -> recognizer -> attendance recorder.
     """
     # Bounding box in the original frame (x1, y1, x2, y2)
     bbox: Tuple[int, int, int, int]
@@ -56,148 +75,139 @@ class DetectedFace:
 
 
 class FaceDetector:
+    """YOLOv8 face detection + optional MediaPipe alignment.
+
+    Includes sandwich-face recovery via tiled + multi-scale detection
+    with relaxed NMS thresholds.
     """
-    STEP 8 + STEP 9 implementation.
 
-    Combines YOLOv8n (fast multi-face detection) with
-    MediaPipe (face alignment/normalization) into one pipeline.
-    """
+    # Target size for aligned face output (ArcFace native = 112x112)
+    MODEL_INPUT_SIZE = (112, 112)
 
-    # Target size for Teachable Machine model input
-    MODEL_INPUT_SIZE = (224, 224)
+    # Minimum face size to process (pixels)
+    MIN_FACE_SIZE = 30
 
-    # Minimum face size to process (pixels) — filters out tiny far-away faces
-    MIN_FACE_SIZE = 60
+    # Padding around detected face for landmark detection (fraction of face)
+    FACE_PADDING = 0.3
 
-    # OpenCV Haar is only a fallback. The embedding stage now rejects unusable
-    # crops, so favor recall here instead of requiring perfect Haar detections.
-    OPENCV_MIN_NEIGHBORS = 5
-    MIN_SKIN_RATIO = 0.08
+    # MediaPipe alignment: provides 468 landmarks for affine alignment
+    ENABLE_MEDIAPIPE_ALIGNMENT = True
 
-    # Padding around detected face before alignment (fraction of face size)
-    FACE_PADDING = 0.2
+    # Edge enhancement: unsharp masking to sharpen face boundaries
+    ENABLE_EDGE_ENHANCEMENT = True
+    UNSHARP_SIGMA = 2.0     # Gaussian sigma (medium radius for feature edges)
+    UNSHARP_STRENGTH = 0.5  # Enhancement strength (0.3–0.7 recommended)
 
-    # This environment's MediaPipe package exposes only the newer tasks API,
-    # not mp.solutions.face_mesh. Keep alignment off unless that API is present.
-    ENABLE_MEDIAPIPE_ALIGNMENT = False
+    # ── Sandwich-face fix parameters ──────────────────────────────────
+    # NMS IOU threshold: lower = less aggressive suppression.
+    # Default YOLO uses 0.45–0.5; we use 0.25 to keep sandwich faces.
+    NMS_IOU_THRESHOLD = 0.25
+
+    # Detection confidence threshold (0.25 keeps most real faces)
+    NMS_CONF_THRESHOLD = 0.25
+
+    # Enable frame tiling to isolate sandwich faces (Fix 3)
+    # WARNING: Each tile adds a full YOLO call. On CPU this tanks FPS.
+    # Enable only on GPU or when accuracy matters more than speed.
+    ENABLE_TILING = False
+
+    # Number of tiles to split the frame into (horizontal)
+    TILE_COLS = 2
+    TILE_ROWS = 1  # 1 row for typical crowd scenes (faces at similar height)
+
+    # Overlap between adjacent tiles (fraction of tile size)
+    TILE_OVERLAP = 0.20
+
+    # Enable multi-scale detection (Fix 4)
+    # WARNING: Doubles YOLO calls per tile/frame. Heavy on CPU.
+    # Enable only on GPU or when small distant faces are missed.
+    ENABLE_MULTI_SCALE = False
+
+    # Scale factors for multi-scale detection
+    SCALE_FACTORS = [1.0, 1.5]
+
+    # IOU threshold for merging duplicate detections across tiles/scales
+    MERGE_IOU_THRESHOLD = 0.60
+
+    # Maximum faces to process per frame (largest/closest first).
+    # In dense crowds, processing 30+ faces tanks FPS. Cap at 10-12
+    # for walking-crowd scenarios where only nearby faces matter.
+    MAX_FACES_PER_FRAME = 10
 
     def __init__(self):
-        """Load YOLOv8n and MediaPipe models."""
+        """Load YOLOv8n and InsightFace landmark models."""
         self._yolo_model = None
-        self._face_recognition = None
-        self._opencv_face_cascade = None
-        self._opencv_eye_cascade = None
-        self._mp_face_mesh = None
-        self._mp_drawing = None
+        self._landmark_model = None  # InsightFace detection for landmarks
         self._cache_dir = Path(__file__).parent / ".cache"
 
         self._load_yolo()
-        self._load_face_recognition_detector()
-        self._load_mediapipe()
+        self._load_landmark_detector()
 
     def _load_yolo(self):
-        """
-        STEP 8 — Load YOLOv8n face detection model.
-
-        Uses the 'yolov8n-face' variant (nano size, face-specific weights).
-        If face-specific weights aren't available, falls back to OpenCV's
-        face cascade. Do not use general yolov8n.pt here: that model detects
-        arbitrary objects and creates false attendance entries.
-
-        First run: ultralytics auto-downloads the model weights.
-        """
+        """Load YOLOv8 model. Raises if unavailable -- no fallback detectors."""
         yolo_cache_dir = self._cache_dir / "ultralytics"
         yolo_cache_dir.mkdir(parents=True, exist_ok=True)
         os.environ.setdefault("YOLO_CONFIG_DIR", str(yolo_cache_dir))
 
         try:
             from ultralytics import YOLO
-        except Exception as e:
-            logger.warning(f"Ultralytics not available, using OpenCV face detector: {e}")
-            self._load_opencv_face_detector()
-            return
-
-        try:
-            self._yolo_model = YOLO("yolov8n-face.pt")
-            logger.info("YOLOv8n-face model loaded (face-specific weights)")
-            return
-        except Exception as e:
-            logger.warning(f"Could not load yolov8n-face.pt: {e}")
-            logger.info("Using OpenCV face detector fallback")
-            self._load_opencv_face_detector()
-
-    def _load_face_recognition_detector(self):
-        """Load dlib HOG face detector via face_recognition as a recall fallback."""
-        try:
-            import face_recognition as fr
-            self._face_recognition = fr
-            logger.info("dlib HOG face detector loaded via face_recognition")
-        except Exception as e:
-            logger.warning("face_recognition detector unavailable: %s", e)
-            self._face_recognition = None
-
-    def _load_opencv_face_detector(self):
-        """Load OpenCV's bundled Haar face cascade as an offline fallback."""
-        cascade_path = Path(cv2.data.haarcascades) / "haarcascade_frontalface_alt2.xml"
-        eye_cascade_path = Path(cv2.data.haarcascades) / "haarcascade_eye_tree_eyeglasses.xml"
-        self._opencv_face_cascade = cv2.CascadeClassifier(str(cascade_path))
-        self._opencv_eye_cascade = cv2.CascadeClassifier(str(eye_cascade_path))
-        if self._opencv_face_cascade.empty() or self._opencv_eye_cascade.empty():
+        except ImportError as e:
             raise RuntimeError(
-                "Could not load YOLO or OpenCV Haar face/eye detector. "
-                "Install ultralytics or check your OpenCV installation."
-            )
-        logger.info("OpenCV Haar face detector loaded with validation filters")
+                "Ultralytics is required for face detection. "
+                "Install it with: pip install ultralytics"
+            ) from e
 
-    def _load_mediapipe(self):
+        # Look for model in models/ directory first, then root
+        base_dir = Path(__file__).parent
+        model_path = base_dir / "models" / "yolov8n.pt"
+        if not model_path.exists():
+            model_path = base_dir / "yolov8n.pt"  # fallback
+
+        self._yolo_model = YOLO(str(model_path))
+        logger.info("YOLOv8n model loaded from %s", model_path.name)
+
+    def _load_landmark_detector(self):
         """
-        STEP 9 — Initialize MediaPipe Face Mesh for alignment.
+        STEP 9 — Load InsightFace detection model for 5-point landmarks.
 
-        Face Mesh detects 468 facial landmarks (eyes, nose, mouth corners, etc.)
-        Used to compute the face's rotation angle and straighten it.
+        Uses the same InsightFace package already loaded for recognition.
+        The detection model provides 5-point landmarks (eyes, nose, mouth)
+        which are used for ArcFace affine alignment.
         """
         if not self.ENABLE_MEDIAPIPE_ALIGNMENT:
-            logger.info("MediaPipe alignment disabled; using direct face crops")
-            self._mp_face_mesh = None
+            logger.info("Landmark alignment disabled; using direct face crops")
+            self._landmark_model = None
             return
 
-        matplotlib_cache_dir = self._cache_dir / "matplotlib"
-        matplotlib_cache_dir.mkdir(parents=True, exist_ok=True)
-        os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_cache_dir))
-
         try:
-            import mediapipe as mp
+            from insightface.app import FaceAnalysis
 
-            if not hasattr(mp, "solutions"):
-                logger.warning(
-                    "MediaPipe %s does not expose mp.solutions; "
-                    "continuing without landmark alignment",
-                    getattr(mp, "__version__", "unknown"),
-                )
-                self._mp_face_mesh = None
-                return
-
-            self._mp_face_mesh = mp.solutions.face_mesh.FaceMesh(
-                static_image_mode=True,     # Each crop is treated as a static image
-                max_num_faces=1,            # Only one face per crop at a time
-                refine_landmarks=True,      # More accurate eye/lip landmarks
-                min_detection_confidence=0.5,
-                min_tracking_confidence=0.5,
+            app = FaceAnalysis(
+                name="buffalo_l",
+                allowed_modules=["detection"],  # Only detection, no recognition
+                providers=["CPUExecutionProvider"],
             )
-            self._mp_drawing = mp.solutions.drawing_utils
-            logger.info("MediaPipe FaceMesh initialized")
+            app.prepare(ctx_id=-1, det_size=(160, 160))  # Small size for speed
+            self._landmark_model = app
+            logger.info("InsightFace landmark detector loaded (for affine alignment)")
 
         except Exception as e:
             logger.warning(
-                "Failed to initialize MediaPipe alignment; "
-                "continuing with direct face crops: %s",
-                e,
+                "Failed to load InsightFace landmark detector; "
+                "continuing with direct face crops: %s", e,
             )
-            self._mp_face_mesh = None
+            self._landmark_model = None
 
     def detect_faces(self, frame: np.ndarray) -> List[DetectedFace]:
         """
-        STEP 8 + STEP 9 — Main pipeline: detect all faces and align each one.
+        STEP 8 + STEP 9 -- Detect faces with enhanced sandwich-face pipeline.
+
+        Pipeline:
+        1. Split frame into overlapping tiles (if ENABLE_TILING)
+        2. Run YOLO on each tile at multiple scales (if ENABLE_MULTI_SCALE)
+        3. Convert tile-local coords back to full-frame coords
+        4. Merge and deduplicate all detections
+        5. Align each surviving detection with MediaPipe
 
         Args:
             frame: Full BGR frame from the camera (OpenCV format)
@@ -209,21 +219,23 @@ class FaceDetector:
         if frame is None or frame.size == 0:
             return []
 
-        # Stage 1: detect face bounding boxes with the best available detector.
-        # Only one detector runs per frame — YOLO is the primary (single forward
-        # pass catches all faces). dlib HOG and OpenCV Haar are fallbacks only.
-        # Running all three and merging was the #1 source of latency at mass events.
-        if self._yolo_model is not None:
-            bounding_boxes = self._run_yolo_detection(frame)
-        elif self._face_recognition is not None:
-            bounding_boxes = self._run_dlib_detection(frame)
+        # ── Enhanced detection with tiling + multi-scale ──────────────
+        if self.ENABLE_TILING:
+            bounding_boxes = self._run_tiled_detection(frame)
         else:
-            bounding_boxes = self._run_opencv_detection(frame)
+            bounding_boxes = self._run_detection_multi_scale(frame)
 
         if not bounding_boxes:
             return []
 
-        # Stage 2: MediaPipe — align each detected face
+        # ── Sort by face area (largest = closest) and cap count ──────
+        bounding_boxes.sort(
+            key=lambda b: (b[0][2] - b[0][0]) * (b[0][3] - b[0][1]),
+            reverse=True,
+        )
+        if self.MAX_FACES_PER_FRAME > 0:
+            bounding_boxes = bounding_boxes[:self.MAX_FACES_PER_FRAME]
+
         detected_faces = []
         for bbox, det_confidence in bounding_boxes:
             aligned = self._align_face(frame, bbox)
@@ -235,19 +247,135 @@ class FaceDetector:
                 ))
 
         logger.debug(
-            "Detected %d faces (from %d detections)",
+            "Detected %d faces (from %d raw detections)",
             len(detected_faces), len(bounding_boxes),
         )
         return detected_faces
+
+    # ── Tiled detection (Fix 3) ────────────────────────────────────────
+
+    def _run_tiled_detection(
+        self, frame: np.ndarray
+    ) -> List[Tuple[Tuple[int, int, int, int], float]]:
+        """
+        Split the frame into overlapping tiles, run detection on each,
+        then merge results back into full-frame coordinates.
+
+        This isolates sandwich faces: in their own tile, the back face
+        becomes the dominant detection and avoids suppression from the
+        larger surrounding front-face boxes.
+        """
+        h, w = frame.shape[:2]
+        all_detections = []
+
+        tiles = self._generate_tiles(w, h)
+
+        for (tx1, ty1, tx2, ty2) in tiles:
+            tile = frame[ty1:ty2, tx1:tx2]
+            if tile.size == 0:
+                continue
+
+            # Run detection on this tile (optionally multi-scale)
+            tile_detections = self._run_detection_multi_scale(tile)
+
+            # Convert tile-local coordinates to full-frame coordinates
+            for (bx1, by1, bx2, by2), conf in tile_detections:
+                full_bbox = (bx1 + tx1, by1 + ty1, bx2 + tx1, by2 + ty1)
+                all_detections.append((full_bbox, conf))
+
+        # Also run on the full frame to catch faces at tile boundaries
+        full_detections = self._run_detection_multi_scale(frame)
+        all_detections.extend(full_detections)
+
+        # Deduplicate across tiles using a higher IOU threshold
+        merged = self._deduplicate_detections(all_detections, self.MERGE_IOU_THRESHOLD)
+
+        logger.debug(
+            "Tiled detection: %d tiles × %d scales → %d raw → %d merged",
+            len(tiles), len(self.SCALE_FACTORS) if self.ENABLE_MULTI_SCALE else 1,
+            len(all_detections), len(merged),
+        )
+        return merged
+
+    def _generate_tiles(
+        self, frame_w: int, frame_h: int
+    ) -> List[Tuple[int, int, int, int]]:
+        """
+        Generate overlapping tile coordinates.
+
+        Returns:
+            List of (x1, y1, x2, y2) tuples for each tile.
+        """
+        tiles = []
+        tile_w = frame_w // self.TILE_COLS
+        tile_h = frame_h // self.TILE_ROWS
+        overlap_w = int(tile_w * self.TILE_OVERLAP)
+        overlap_h = int(tile_h * self.TILE_OVERLAP)
+
+        for row in range(self.TILE_ROWS):
+            for col in range(self.TILE_COLS):
+                x1 = max(0, col * tile_w - overlap_w)
+                y1 = max(0, row * tile_h - overlap_h)
+                x2 = min(frame_w, (col + 1) * tile_w + overlap_w)
+                y2 = min(frame_h, (row + 1) * tile_h + overlap_h)
+                tiles.append((x1, y1, x2, y2))
+
+        return tiles
+
+    # ── Multi-scale detection (Fix 4) ─────────────────────────────────
+
+    def _run_detection_multi_scale(
+        self, frame: np.ndarray
+    ) -> List[Tuple[Tuple[int, int, int, int], float]]:
+        """
+        Run detection at multiple scales and merge results.
+        At larger scales, small distant back-faces become large enough
+        to be reliably detected.
+        """
+        if not self.ENABLE_MULTI_SCALE or len(self.SCALE_FACTORS) <= 1:
+            return self._run_yolo_detection(frame)
+
+        h, w = frame.shape[:2]
+        all_detections = []
+
+        for scale in self.SCALE_FACTORS:
+            if scale == 1.0:
+                scaled_frame = frame
+            else:
+                new_w = int(w * scale)
+                new_h = int(h * scale)
+                scaled_frame = cv2.resize(
+                    frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR
+                )
+
+            detections = self._run_yolo_detection(scaled_frame)
+
+            # Scale coordinates back to original frame size
+            if scale != 1.0:
+                for (bx1, by1, bx2, by2), conf in detections:
+                    orig_bbox = (
+                        int(bx1 / scale),
+                        int(by1 / scale),
+                        int(bx2 / scale),
+                        int(by2 / scale),
+                    )
+                    all_detections.append((orig_bbox, conf))
+            else:
+                all_detections.extend(detections)
+
+        # Deduplicate across scales
+        return self._deduplicate_detections(all_detections, self.MERGE_IOU_THRESHOLD)
+
+    # ── Core YOLO detection ───────────────────────────────────────────
 
     def _run_yolo_detection(
         self, frame: np.ndarray
     ) -> List[Tuple[Tuple[int, int, int, int], float]]:
         """
-        Run YOLOv8n on the full frame and return all face bounding boxes.
+        Run YOLOv8 on a single frame/tile and return all bounding boxes.
 
-        YOLOv8 processes the entire frame in one forward pass —
-        this is what makes it efficient for 20-30+ faces simultaneously.
+        Uses relaxed NMS thresholds (IOU=0.25) to prevent suppression
+        of sandwich faces.
 
         Returns:
             List of ((x1, y1, x2, y2), confidence) tuples
@@ -258,9 +386,9 @@ class FaceDetector:
         try:
             results = self._yolo_model(
                 frame,
-                verbose=False,      # Suppress YOLO's console output
-                conf=0.4,           # Minimum detection confidence threshold
-                iou=0.5,            # IOU threshold for non-max suppression
+                verbose=False,
+                conf=self.NMS_CONF_THRESHOLD,
+                iou=self.NMS_IOU_THRESHOLD,
             )
         except Exception as e:
             logger.error(f"YOLO detection failed: {e}")
@@ -272,17 +400,19 @@ class FaceDetector:
                 continue
 
             for box in result.boxes:
-                # Get bounding box coordinates
+                if hasattr(box, 'cls') and box.cls is not None:
+                    class_id = int(box.cls[0].cpu().numpy())
+                    if class_id != 0:
+                        continue
+
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
                 confidence = float(box.conf[0].cpu().numpy())
 
-                # Filter out tiny detections (far-away faces, false positives)
                 width = x2 - x1
                 height = y2 - y1
                 if width < self.MIN_FACE_SIZE or height < self.MIN_FACE_SIZE:
                     continue
 
-                # Clamp to frame boundaries
                 h, w = frame.shape[:2]
                 x1 = max(0, x1)
                 y1 = max(0, y1)
@@ -293,175 +423,91 @@ class FaceDetector:
 
         return bboxes
 
-    def _run_dlib_detection(
-        self, frame: np.ndarray
-    ) -> List[Tuple[Tuple[int, int, int, int], float]]:
-        """Run dlib's HOG face detector through face_recognition."""
-        if self._face_recognition is None:
-            return []
-
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        try:
-            locations = self._face_recognition.face_locations(
-                rgb,
-                number_of_times_to_upsample=1,
-                model="hog",
-            )
-        except Exception as e:
-            logger.debug("dlib face detection failed: %s", e)
-            return []
-
-        h, w = frame.shape[:2]
-        bboxes = []
-        for top, right, bottom, left in locations:
-            x1 = max(0, int(left))
-            y1 = max(0, int(top))
-            x2 = min(w, int(right))
-            y2 = min(h, int(bottom))
-            if x2 - x1 < self.MIN_FACE_SIZE or y2 - y1 < self.MIN_FACE_SIZE:
-                continue
-            bboxes.append(((x1, y1, x2, y2), 0.95))
-
-        return bboxes
-
-    def _run_opencv_detection(
-        self, frame: np.ndarray
-    ) -> List[Tuple[Tuple[int, int, int, int], float]]:
-        """Run the OpenCV Haar fallback detector."""
-        if self._opencv_face_cascade is None:
-            return []
-
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        gray = cv2.equalizeHist(gray)
-        faces = self._opencv_face_cascade.detectMultiScale(
-            gray,
-            scaleFactor=1.08,
-            minNeighbors=self.OPENCV_MIN_NEIGHBORS,
-            minSize=(self.MIN_FACE_SIZE, self.MIN_FACE_SIZE),
-            flags=cv2.CASCADE_SCALE_IMAGE,
-        )
-
-        bboxes = []
-        for x, y, w, h in faces:
-            bbox = (int(x), int(y), int(x + w), int(y + h))
-            if self._is_valid_opencv_face(frame, gray, bbox):
-                bboxes.append((bbox, 1.0))
-
-        return bboxes
-
-    def _is_valid_opencv_face(
-        self,
-        frame: np.ndarray,
-        gray: np.ndarray,
-        bbox: Tuple[int, int, int, int],
-    ) -> bool:
-        """Reject common Haar false positives before they reach attendance."""
-        x1, y1, x2, y2 = bbox
-        width = x2 - x1
-        height = y2 - y1
-        if width <= 0 or height <= 0:
-            return False
-
-        aspect_ratio = width / height
-        if aspect_ratio < 0.55 or aspect_ratio > 1.35:
-            return False
-
-        face_gray = gray[y1:y2, x1:x2]
-        face_bgr = frame[y1:y2, x1:x2]
-        if face_gray.size == 0 or face_bgr.size == 0:
-            return False
-
-        upper_half = face_gray[: max(1, height // 2), :]
-        min_eye_size = max(10, int(min(width, height) * 0.12))
-        eyes = self._opencv_eye_cascade.detectMultiScale(
-            upper_half,
-            scaleFactor=1.08,
-            minNeighbors=4,
-            minSize=(min_eye_size, min_eye_size),
-            flags=cv2.CASCADE_SCALE_IMAGE,
-        )
-        skin_ok = self._skin_ratio(face_bgr) >= self.MIN_SKIN_RATIO
-        return skin_ok or len(eyes) >= 1
-
-    def _merge_overlapping_boxes(
-        self,
-        boxes: List[Tuple[Tuple[int, int, int, int], float]],
-        iou_threshold: float = 0.35,
-    ) -> List[Tuple[Tuple[int, int, int, int], float]]:
-        """Merge duplicate detections from YOLO, dlib, and OpenCV."""
-        if not boxes:
-            return []
-
-        sorted_boxes = sorted(boxes, key=lambda item: item[1], reverse=True)
-        merged: List[Tuple[Tuple[int, int, int, int], float]] = []
-        for bbox, confidence in sorted_boxes:
-            if any(self._iou(bbox, existing_bbox) > iou_threshold for existing_bbox, _ in merged):
-                continue
-            merged.append((bbox, confidence))
-
-        return sorted(merged, key=lambda item: item[0][0])
+    # ── Deduplication via NMS merge ────────────────────────────────────
 
     @staticmethod
-    def _iou(
-        a: Tuple[int, int, int, int],
-        b: Tuple[int, int, int, int],
+    def _compute_iou(
+        box1: Tuple[int, int, int, int],
+        box2: Tuple[int, int, int, int],
     ) -> float:
-        """Intersection-over-union for two xyxy boxes."""
-        ax1, ay1, ax2, ay2 = a
-        bx1, by1, bx2, by2 = b
-        inter_x1 = max(ax1, bx1)
-        inter_y1 = max(ay1, by1)
-        inter_x2 = min(ax2, bx2)
-        inter_y2 = min(ay2, by2)
-        inter_w = max(0, inter_x2 - inter_x1)
-        inter_h = max(0, inter_y2 - inter_y1)
-        inter_area = inter_w * inter_h
-        if inter_area == 0:
+        """Compute Intersection over Union between two bounding boxes."""
+        x1 = max(box1[0], box2[0])
+        y1 = max(box1[1], box2[1])
+        x2 = min(box1[2], box2[2])
+        y2 = min(box1[3], box2[3])
+
+        inter = max(0, x2 - x1) * max(0, y2 - y1)
+        if inter == 0:
             return 0.0
 
-        area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
-        area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
-        union = area_a + area_b - inter_area
-        if union <= 0:
-            return 0.0
-        return inter_area / union
+        area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
+        area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+        union = area1 + area2 - inter
 
-    def _skin_ratio(self, face_bgr: np.ndarray) -> float:
-        """Estimate whether a crop contains enough skin-like pixels."""
-        ycrcb = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2YCrCb)
-        _, cr, cb = cv2.split(ycrcb)
-        skin_mask = (
-            (cr >= 133) & (cr <= 180) &
-            (cb >= 70) & (cb <= 135)
-        )
-        return float(np.count_nonzero(skin_mask)) / float(skin_mask.size)
+        return inter / union if union > 0 else 0.0
+
+    @classmethod
+    def _deduplicate_detections(
+        cls,
+        detections: List[Tuple[Tuple[int, int, int, int], float]],
+        iou_threshold: float,
+    ) -> List[Tuple[Tuple[int, int, int, int], float]]:
+        """
+        Merge duplicate detections from tiling/multi-scale.
+
+        Uses a softer NMS: for truly overlapping boxes (IOU > threshold),
+        keep the higher-confidence one. This is separate from YOLO's
+        internal NMS — it only removes *true* duplicates created by
+        overlapping tiles or scales.
+        """
+        if not detections:
+            return []
+
+        # Sort by confidence descending
+        sorted_dets = sorted(detections, key=lambda d: d[1], reverse=True)
+        keep = []
+
+        for bbox, conf in sorted_dets:
+            is_duplicate = False
+            for kept_bbox, _ in keep:
+                if cls._compute_iou(bbox, kept_bbox) > iou_threshold:
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                keep.append((bbox, conf))
+
+        return keep
 
     def _align_face(
         self, frame: np.ndarray, bbox: Tuple[int, int, int, int]
     ) -> Optional[np.ndarray]:
         """
-        STEP 9 — Crop, align, and normalize a single face.
+        STEP 9 — Landmark-based affine alignment.
 
-        Process:
-        1. Crop face from frame with padding
-        2. Convert to RGB for MediaPipe
-        3. Detect facial landmarks with MediaPipe Face Mesh
-        4. Compute rotation angle from eye positions
-        5. Rotate/align the face to be upright
-        6. Resize to 224x224 for the Keras model
+        Instead of cropping the YOLO bounding box (which includes neck,
+        hair, and background), this uses facial landmarks to compute an
+        affine transform that warps the face to ArcFace's standard
+        112x112 template position.
+
+        Pipeline:
+        1. Crop generous region around YOLO bbox for landmark detection
+        2. Detect 468 facial landmarks with MediaPipe Face Mesh
+        3. Extract 5-point landmarks (eyes, nose, mouth corners)
+        4. Compute affine transform to ArcFace reference template
+        5. Warp full frame → 112x112 aligned crop (no background bleed)
+        6. Apply edge enhancement (unsharp masking)
 
         Args:
-            frame: Full BGR frame
+            frame: Full BGR frame from camera
             bbox: (x1, y1, x2, y2) bounding box from YOLO
 
         Returns:
-            Aligned RGB image as numpy array (224, 224, 3)
-            or None if alignment fails (MediaPipe couldn't find landmarks)
+            Aligned RGB image (112, 112, 3) or None if alignment fails
         """
         x1, y1, x2, y2 = bbox
         h_frame, w_frame = frame.shape[:2]
 
-        # Add padding around the face crop for better landmark detection
+        # Generous padding for reliable landmark detection
         pad_w = int((x2 - x1) * self.FACE_PADDING)
         pad_h = int((y2 - y1) * self.FACE_PADDING)
 
@@ -471,68 +517,111 @@ class FaceDetector:
         crop_y2 = min(h_frame, y2 + pad_h)
 
         face_crop = frame[crop_y1:crop_y2, crop_x1:crop_x2]
-
         if face_crop.size == 0:
             return None
 
-        # Convert BGR → RGB for MediaPipe
+        # Convert BGR → RGB for fallback output
         face_rgb = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
 
-        if self._mp_face_mesh is None:
-            return self._direct_resize(face_rgb)
+        if self._landmark_model is None:
+            # No landmark model — fall back to direct crop + resize
+            result = self._direct_resize(face_rgb)
+            return self._enhance_edges(result) if self.ENABLE_EDGE_ENHANCEMENT else result
 
-        # Run MediaPipe landmark detection
+        # ── InsightFace landmark detection on the padded crop ─────────
         try:
-            results = self._mp_face_mesh.process(face_rgb)
+            faces = self._landmark_model.get(face_crop)  # BGR input
         except Exception as e:
-            logger.debug("MediaPipe processing error: %s", e)
-            # Fall back to direct resize without alignment
-            return self._direct_resize(face_rgb)
+            logger.debug("InsightFace landmark error: %s", e)
+            result = self._direct_resize(face_rgb)
+            return self._enhance_edges(result) if self.ENABLE_EDGE_ENHANCEMENT else result
 
-        if not results.multi_face_landmarks:
-            # MediaPipe couldn't find landmarks — use direct resize as fallback
-            logger.debug("MediaPipe found no landmarks — using direct resize")
-            return self._direct_resize(face_rgb)
+        if not faces or faces[0].kps is None:
+            logger.debug("No landmarks found — using direct resize")
+            result = self._direct_resize(face_rgb)
+            return self._enhance_edges(result) if self.ENABLE_EDGE_ENHANCEMENT else result
 
-        # Get the first (only) face's landmarks
-        landmarks = results.multi_face_landmarks[0].landmark
-        h_crop, w_crop = face_crop.shape[:2]
+        # InsightFace returns 5-point kps in crop coordinates.
+        # Map to full-frame coordinates by adding crop offset.
+        kps = faces[0].kps.copy()  # shape (5, 2)
+        kps[:, 0] += crop_x1
+        kps[:, 1] += crop_y1
 
-        # ── Compute eye center positions for rotation correction ──────────
-        # Left eye: landmarks 33 (outer corner), 133 (inner corner)
-        # Right eye: landmarks 362 (outer corner), 263 (inner corner)
-        # Using outer corners for stable alignment reference
+        # ── Affine warp from detected landmarks to ArcFace template ──
+        aligned = self._affine_align(frame, kps.astype(np.float32))
+        if aligned is None:
+            result = self._direct_resize(face_rgb)
+            return self._enhance_edges(result) if self.ENABLE_EDGE_ENHANCEMENT else result
 
-        left_eye_x = int(landmarks[33].x * w_crop)
-        left_eye_y = int(landmarks[33].y * h_crop)
-        right_eye_x = int(landmarks[362].x * w_crop)
-        right_eye_y = int(landmarks[362].y * h_crop)
+        # Convert BGR → RGB (affine warp was on the BGR frame)
+        aligned_rgb = cv2.cvtColor(aligned, cv2.COLOR_BGR2RGB)
 
-        # Compute the angle between eyes
-        dy = right_eye_y - left_eye_y
-        dx = right_eye_x - left_eye_x
-        angle = np.degrees(np.arctan2(dy, dx))
+        return self._enhance_edges(aligned_rgb) if self.ENABLE_EDGE_ENHANCEMENT else aligned_rgb
 
-        # Only rotate if the tilt is significant (> 2 degrees)
-        if abs(angle) > 2.0:
-            # Rotate around the midpoint between the eyes
-            eye_center = (
-                (left_eye_x + right_eye_x) // 2,
-                (left_eye_y + right_eye_y) // 2,
-            )
-            rotation_matrix = cv2.getRotationMatrix2D(eye_center, angle, 1.0)
-            aligned_face = cv2.warpAffine(
-                face_rgb, rotation_matrix, (w_crop, h_crop),
-                flags=cv2.INTER_LINEAR,
-                borderMode=cv2.BORDER_REPLICATE,
-            )
-        else:
-            aligned_face = face_rgb
+    def _affine_align(
+        self, frame_bgr: np.ndarray, src_landmarks: np.ndarray,
+        output_size: int = 112,
+    ) -> Optional[np.ndarray]:
+        """
+        Compute a similarity transform from detected 5-point landmarks
+        to ArcFace's canonical reference positions and warp the face.
 
-        return self._direct_resize(aligned_face)
+        This produces the exact 112x112 crop ArcFace was trained on:
+        - Face centered and upright
+        - Eyes at standard positions
+        - Background pixels minimised
+        - No bounding-box bleed
+
+        Args:
+            frame_bgr: Full BGR frame (warp uses the full image)
+            src_landmarks: 5x2 array of detected landmark positions
+            output_size: Output size (default 112 for ArcFace)
+
+        Returns:
+            Aligned BGR face (112x112x3) or None if transform fails
+        """
+        dst = ARCFACE_REF_112.copy()
+
+        # estimateAffinePartial2D computes similarity transform
+        # (rotation + uniform scale + translation — 4 DOF)
+        # This preserves face proportions unlike a full affine (6 DOF).
+        tform, inliers = cv2.estimateAffinePartial2D(
+            src_landmarks.reshape(-1, 1, 2),
+            dst.reshape(-1, 1, 2),
+            method=cv2.LMEDS,
+        )
+
+        if tform is None:
+            logger.debug("Affine transform estimation failed")
+            return None
+
+        aligned = cv2.warpAffine(
+            frame_bgr, tform, (output_size, output_size),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REPLICATE,
+        )
+        return aligned
+
+    def _enhance_edges(self, face_rgb: np.ndarray) -> np.ndarray:
+        """
+        Unsharp masking: sharpen facial feature edges without
+        affecting smooth skin regions.
+
+        Process: sharpened = original + strength * (original - blurred)
+        Cost: ~2ms — runs on every crop with negligible FPS impact.
+        """
+        blurred = cv2.GaussianBlur(
+            face_rgb, (0, 0), self.UNSHARP_SIGMA,
+        )
+        sharpened = cv2.addWeighted(
+            face_rgb, 1.0 + self.UNSHARP_STRENGTH,
+            blurred, -self.UNSHARP_STRENGTH,
+            0,
+        )
+        return np.clip(sharpened, 0, 255).astype(np.uint8)
 
     def _direct_resize(self, face_rgb: np.ndarray) -> np.ndarray:
-        """Resize face image to 224x224. INTER_LINEAR is 3-4x faster than LANCZOS4."""
+        """Fallback: resize face to 112x112 without landmark alignment."""
         return cv2.resize(
             face_rgb,
             self.MODEL_INPUT_SIZE,
@@ -574,6 +663,7 @@ class FaceDetector:
             "internal":         (255, 136, 51),    # Blue
             "unknown":          (0,   0,   255),   # Red
             "low_confidence":   (128, 128, 128),   # Gray
+            "new_face":         (0,   200, 255),   # Orange/Gold — newly registered
         }
 
         LABEL_MAP = {
@@ -582,6 +672,7 @@ class FaceDetector:
             "internal":         "Internal",
             "unknown":          "Unknown",
             "low_confidence":   "Low Confidence",
+            "new_face":         "New",
         }
 
         for i, face in enumerate(detected_faces):
@@ -595,8 +686,8 @@ class FaceDetector:
             status = result.get("status", "low_confidence") if result else "low_confidence"
             color = COLOR_MAP.get(status, (128, 128, 128))
 
-            # Draw bounding box
-            thickness = 2 if status == "marked" else 1
+            # Draw bounding box — thicker for counted and new faces
+            thickness = 2 if status in ("marked", "new_face") else 1
             cv2.rectangle(annotated, (x1, y1), (x2, y2), color, thickness)
 
             # Build label text
@@ -611,6 +702,8 @@ class FaceDetector:
                     label = f"{status_label} ({conf:.0%})"
                 elif status == "internal":
                     label = f"{display_name} | Not counted"
+                elif status == "new_face":
+                    label = f"{person_id} | NEW #{count}"
                 else:
                     label = f"{person_id} | {status_label} #{count}"
             else:

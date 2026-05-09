@@ -684,6 +684,20 @@ class DatabaseManager:
             logger.error(f"Error updating signature for {person_id}: {e}")
             return False
 
+    def update_person_reference_photo(self, person_id: str, photo_path: str) -> bool:
+        """Store the reference photo path for a person (first sighting)."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    "UPDATE persons SET reference_photo_path=? WHERE person_id=?",
+                    (photo_path, person_id),
+                )
+                conn.commit()
+                return True
+        except sqlite3.Error as e:
+            logger.error(f"Error updating reference photo for {person_id}: {e}")
+            return False
+
     def upsert_internal_person(
         self,
         person_id: str,
@@ -733,26 +747,22 @@ class DatabaseManager:
             return []
 
     def get_next_face_id(self, for_date: Optional[date] = None) -> str:
-        """Return the next FACE-YYYYMMDD-NNNN ID for the given date."""
-        if for_date is None:
-            for_date = date.today()
-
-        prefix = f"FACE-{for_date.strftime('%Y%m%d')}-"
+        """Return the next person_N ID (global auto-increment across all persons)."""
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT person_id FROM persons WHERE person_id LIKE ? ORDER BY person_id DESC LIMIT 1",
-                    (prefix + "%",),
+                    "SELECT person_id FROM persons WHERE person_id LIKE 'person_%' ORDER BY LENGTH(person_id) DESC, person_id DESC LIMIT 1"
                 )
                 row = cursor.fetchone()
                 if row is None:
-                    return f"{prefix}0001"
-                last_number = int(row["person_id"].rsplit("-", 1)[1])
-                return f"{prefix}{last_number + 1:04d}"
+                    return "person_1"
+                last_id = row["person_id"]
+                last_number = int(last_id.split("_", 1)[1])
+                return f"person_{last_number + 1}"
         except (sqlite3.Error, ValueError, IndexError) as e:
             logger.error("Error generating next face ID: %s", e)
-            return f"{prefix}{int(datetime.now().timestamp())}"
+            return f"person_{int(datetime.now().timestamp())}"
 
     def get_statistics(self) -> dict:
         """

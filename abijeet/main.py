@@ -30,6 +30,9 @@ import traceback
 from pathlib import Path
 from datetime import datetime
 
+import numpy as np
+
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
@@ -180,6 +183,68 @@ class FPSTracker:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# RESULT.MD GENERATION
+# ─────────────────────────────────────────────────────────────────────────────
+
+def write_result_md(db, recorder, output_path=None):
+    """Write a summarized attendance report to result.md."""
+    if output_path is None:
+        output_path = BASE_DIR / "result.md"
+
+    stats = recorder.get_session_stats()
+    records = db.get_today_attendance()
+    all_persons = db.get_all_persons()
+    now = datetime.now()
+
+    lines = []
+    lines.append("# Attendance System — Session Report")
+    lines.append("")
+    lines.append(f"**Generated:** {now.strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"**Date:** {stats['today_date']}")
+    lines.append("")
+    lines.append("## Summary")
+    lines.append("")
+    lines.append(f"| Metric | Value |")
+    lines.append(f"|--------|-------|")
+    lines.append(f"| Total attendance counts today | {stats['today_total']} |")
+    lines.append(f"| Registered persons (all-time) | {stats['registered_persons']} |")
+    lines.append(f"| Session: faces counted | {stats['session_marked']} |")
+    lines.append(f"| Session: debounced sightings | {stats['session_duplicates_blocked']} |")
+    lines.append(f"| Session: unknown faces | {stats['session_unknowns']} |")
+    lines.append("")
+
+    if records:
+        lines.append("## Today's Attendance Log")
+        lines.append("")
+        lines.append("| Person ID | Count | First Seen | Last Seen | Display Name |")
+        lines.append("|-----------|-------|------------|-----------|--------------|")
+        for rec in records:
+            display = rec["display_name"] or "-"
+            lines.append(
+                f"| {rec['person_id']} | {rec['count']} | "
+                f"{rec['first_seen']} | {rec['last_seen']} | {display} |"
+            )
+        lines.append("")
+
+    if all_persons:
+        lines.append("## All Registered Persons")
+        lines.append("")
+        lines.append("| Person ID | Role | Registered Date | Display Name |")
+        lines.append("|-----------|------|-----------------|--------------|")
+        for p in all_persons:
+            role = p["role"] or "guest"
+            reg_date = str(p["registered_date"]) if p["registered_date"] else "-"
+            display = p["display_name"] or "-"
+            lines.append(f"| {p['person_id']} | {role} | {reg_date} | {display} |")
+        lines.append("")
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+    return output_path
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MAIN PROGRAM
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -237,8 +302,16 @@ def main():
 
     fps_tracker = FPSTracker()
 
+    # Face tracker — tracks faces across frames, recognizes once per person
+    from tracker import FaceTracker
+    face_tracker = FaceTracker()
+
     logger.info("\nSystem ready. Starting live feed...")
     logger.info("Press Q in the camera window to quit.\n")
+
+    # ── Sharp frame buffer for quality image selection ──────────────────
+    from frame_buffer import SharpFrameBuffer
+    sharp_buffer = SharpFrameBuffer()
 
     # ── STEP 6 — Start camera feed ───────────────────────────────────────
     if not camera.start():
@@ -275,14 +348,65 @@ def main():
                 )
 
                 if detected_faces:
-                    # ── STEP 10 — Generated face identity matching ───────
-                    face_images = [f.aligned_image for f in detected_faces]
-                    recognitions = identity_manager.identify_batch(face_images)
+                    # ── STEP 10a — Update tracker with new detections ────
+                    face_tracker.update(detected_faces)
 
-                    # ── STEPS 11+12+13 — Attendance recording ────────────
-                    attendance_results = recorder.process_frame_recognitions(
-                        recognitions,
-                        face_images,
+                    # ── STEP 10b — Recognize only qualified tracks ───────
+                    # Tracker picks the best quality frame per person and
+                    # only triggers ArcFace for new/unrecognized tracks.
+                    tracks_to_recognize = face_tracker.get_tracks_to_recognize()
+                    if tracks_to_recognize:
+                        face_images = [t.best_crop for t in tracks_to_recognize]
+                        new_recognitions = identity_manager.identify_batch(face_images)
+                        for track, recog in zip(tracks_to_recognize, new_recognitions):
+                            face_tracker.store_recognition(track.track_id, recog)
+
+                    logger.debug(
+                        "Tracker: %d active, %d total, %d recognized this frame",
+                        face_tracker.active_count,
+                        face_tracker.total_tracks,
+                        len(tracks_to_recognize),
+                    )
+
+                    # ── STEPS 11+12+13 — Attendance for newly recognized ─
+                    # Only process attendance for tracks just recognized
+                    # (not every frame — the tracker handles deduplication)
+                    active_tracks = face_tracker.get_active_tracks()
+                    newly_recognized_ids = face_tracker.get_newly_recognized_track_ids()
+
+                    recognitions = []
+                    face_images_for_attendance = []
+                    for track in active_tracks:
+                        if track.recognition_result is not None:
+                            recognitions.append(track.recognition_result)
+                            face_images_for_attendance.append(
+                                track.best_crop if track.best_crop is not None
+                                else track.current_crop
+                            )
+
+                    if recognitions:
+                        attendance_results = recorder.process_frame_recognitions(
+                            recognitions,
+                            face_images_for_attendance,
+                        )
+                    else:
+                        attendance_results = []
+
+                    # Build display faces from all active tracks
+                    from detector import DetectedFace
+                    display_faces = []
+                    for track in active_tracks:
+                        display_faces.append(DetectedFace(
+                            bbox=track.bbox,
+                            aligned_image=track.current_crop if track.current_crop is not None else np.zeros((224,224,3), dtype=np.uint8),
+                            detection_confidence=track.detection_confidence,
+                        ))
+
+                    # Scale to display coordinates
+                    display_faces = _scale_faces_for_display(
+                        display_faces,
+                        detection_input.shape,
+                        frame.shape,
                     )
 
                     last_detected_faces = display_faces
@@ -296,6 +420,7 @@ def main():
                                 result.person_id, result.count,
                             )
                 else:
+                    face_tracker.update([])  # Track disappearances
                     last_detected_faces = []
                     last_attendance_results = []
 
@@ -329,9 +454,14 @@ def main():
         logger.info("\nCleaning up...")
         camera.stop()
         detector.release()
+        sharp_buffer.clear_all()
 
         # Print final summary
         recorder.print_session_summary()
+
+        # Write result.md report
+        result_path = write_result_md(db, recorder)
+        logger.info("Attendance report written to: %s", result_path)
 
         logger.info("\n" + "=" * 60)
         logger.info("  Attendance system stopped cleanly.")

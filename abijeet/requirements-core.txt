@@ -1,12 +1,6 @@
 # ============================================================
-# Attendance Management System — Python Dependencies
-# ============================================================
-# Install all with:
-#   pip install -r requirements.txt
-#
-# Python 3.8-3.12 required. TensorFlow/MediaPipe do not support Python 3.14.
-# Windows OS (as per project spec)
-# All processing on CPU — no GPU needed
+# Attendance Management System — Core Python Dependencies
+# (Simplified: excludes tensorflowjs for easier installation)
 # ============================================================
 
 # ── Core Vision & Detection ──────────────────────────────────
@@ -16,21 +10,11 @@ mediapipe>=0.10.0            # Face landmark detection for alignment/normalizati
 
 # ── Machine Learning ─────────────────────────────────────────
 tensorflow>=2.12.0           # Loading and running the converted Keras model
-tensorflowjs>=4.0.0          # One-time conversion: model.json → model.h5
 
 # ── Face Recognition (deep embedding) ────────────────────────
 insightface>=0.7.3           # ArcFace 512-d face embeddings (replaces dlib)
-onnxruntime>=1.15.0          # Runtime for insightface model inference
 faiss-cpu>=1.7.0             # FAISS index for fast cosine similarity search
 
 # ── Image & Array Processing ─────────────────────────────────
 numpy>=1.23.0                # Array operations, image preprocessing
 Pillow>=9.0.0                # Image resizing, format conversion
-
-# ── Built-in (no install needed) ─────────────────────────────
-# sqlite3    — database operations (stdlib)
-# os         — file/path operations (stdlib)
-# pathlib    — modern path handling (stdlib)
-# datetime   — date/time for records and filenames (stdlib)
-# json       — reading metadata.json (stdlib)
-# logging    — system logging (stdlib)

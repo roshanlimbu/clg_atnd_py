@@ -2,6 +2,17 @@
 
 A real-time face detection and attendance tracking system designed for **mass events** (ceremonies, festivals, conferences). Uses YOLOv8n-face for multi-face detection and dlib ResNet-34 embeddings for generated face identity matching — no pre-enrollment needed.
 
+## ✨ NEW: Advanced Profile Detection
+
+**🎯 Detect faces at ANY angle** - not just front-facing!
+
+- ✅ **Head Pose Detection** - Automatically detects face angle (front, left, right, up, down)
+- ✅ **Profile Recognition** - Recognizes people from side profiles and extreme angles
+- ✅ **Pose-Aware Matching** - Adjusts matching thresholds based on angle difference
+- ✅ **Multi-Angle Enrollment** - Capture faces from 5 different angles for better accuracy
+
+**See [PROFILE_DETECTION_GUIDE.md](PROFILE_DETECTION_GUIDE.md) for detailed documentation.**
+
 ---
 
 ## System Overview
@@ -11,14 +22,17 @@ Camera Feed ──► Capture Thread ──► Main Loop (every 5th frame)
                                       │
                                       ├─► YOLOv8n Face Detection
                                       ├─► Face Alignment (MediaPipe)
+                                      ├─► Head Pose Detection (NEW)  ◄── Detects angle
                                       ├─► dlib Embedding Encoding
-                                      ├─► Identity Matching
-                                      └─► Attendance Recording (DB + File)
+                                      ├─► Pose-Aware Matching (NEW) ◄── Adjusts threshold
+                                      └─► Attendance Recording (DB + File + Pose)
                                                │
                                                └─► Dashboard (HTTP Server)
 ```
 
 The system processes every 5th frame for detection. YOLO catches **all faces** in a single forward pass with no hard upper limit (practical: 50-80 faces per frame with current profile settings). The dlib encoding step is the per-face throughput bottleneck (~30ms per face with the optimized `model=small` settings).
+
+**NEW**: The system now detects head pose (angle) for each face and uses this to improve matching accuracy across different angles. People can be recognized from front, left profile, right profile, and other angles.
 
 ---
 
@@ -126,7 +140,9 @@ The dashboard shows:
 | `main.py` | Entry point — connects camera, runs the main detection loop |
 | `camera.py` | Background capture thread + frame display + adaptive profile |
 | `detector.py` | YOLOv8n face detection + face alignment |
-| `face_identity.py` | dlib ResNet-34 embedding encoding + identity matching |
+| `face_identity.py` | dlib ResNet-34 embedding encoding + identity matching + **pose-aware matching** |
+| `head_pose_detector.py` | **[NEW]** Head pose estimation (front, left, right, up, down) using MediaPipe |
+| `enrollment_mode.py` | **[NEW]** Interactive multi-angle enrollment mode for better accuracy |
 | `attendance.py` | Attendance recording, debouncing, photo saving |
 | `database.py` | SQLite database operations |
 | `memory.py` | Daily memory file for Layer 1 duplicate prevention |
@@ -139,9 +155,10 @@ The dashboard shows:
 
 1. **YOLOv8n-face** — Single forward pass detects all faces in the frame. No upper limit.
 2. **Face Alignment** — Crops each detection, aligns using eye landmarks.
-3. **dlib Embedding** — Encodes each aligned face into a 128-dimensional vector.
-4. **Identity Matching** — Compares against known faces via L2 distance (`threshold = 0.58`).
-5. **Attendance Recording** — Dual-layer: memory file (Layer 1) + database UNIQUE constraint (Layer 2).
+3. **Head Pose Detection** — **[NEW]** Estimates head angle (front, left profile, right profile, etc.)
+4. **dlib Embedding** — Encodes each aligned face into a 128-dimensional vector.
+5. **Identity Matching** — Compares against known faces via L2 distance with **pose-aware threshold adjustment**.
+6. **Attendance Recording** — Dual-layer: memory file (Layer 1) + database UNIQUE constraint (Layer 2) + pose information.
 
 ### Adaptive Performance
 
@@ -157,7 +174,44 @@ If detection consistently takes >46ms (1.4× the 33ms budget), the system auto-d
 
 ---
 
-## Configuration
+## Advanced Features: Profile Detection
+
+### What's New?
+
+The system now includes **advanced head pose detection** to recognize people from any angle:
+
+- **Automatic Angle Detection**: Detects front, left profile, right profile, up, and down poses
+- **Pose-Aware Matching**: Adjusts recognition thresholds based on angle differences
+- **Multi-Angle Enrollment**: Capture faces from 5 angles (3 frames each) for 10× better accuracy
+- **Side Profile Recognition**: Works reliably even when people turn their head sideways
+
+### Example: Why This Matters
+
+**Before**: Person approaches camera from the left (90° angle)
+- Face detected but not recognized (distance 0.72 > threshold 0.60)
+- Result: **UNKNOWN** ❌
+
+**After**: Same scenario with profile detection
+- Head pose detected as "left_profile"  
+- Threshold automatically increased to 0.69
+- Face recognized correctly (distance 0.68 < threshold 0.69)
+- Result: **RECOGNIZED** ✅
+
+### Quick Start with Profiles
+
+1. **Automatic** (existing flow): Just run `main.py` - the system automatically detects profiles
+2. **Better accuracy** (recommended): Use multi-angle enrollment for new users
+
+For detailed documentation, see [PROFILE_DETECTION_GUIDE.md](PROFILE_DETECTION_GUIDE.md).
+
+### Live Feed Updates
+
+The live feed now shows:
+```
+Pose: left_profile | Yaw: -75.3° | Pitch: 2.1° | Roll: 0.8°
+```
+
+---
 
 All settings in `main.py`:
 

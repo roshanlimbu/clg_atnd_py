@@ -10,6 +10,7 @@ Coordinates the full attendance pipeline for each recognized face:
 2. Layer 2 insert — SQLite database (with UNIQUE constraint)
 3. Memory update  — write to today's file immediately after DB insert
 4. Visual status  — determine color/label for live feed overlay
+5. Image Quality  — only save clear, sharp images for evidence
 ========================================================
 """
 
@@ -34,8 +35,149 @@ STATUS_ALREADY_MARKED  = "already_marked"  # Debounced inside the time window (y
 STATUS_UNKNOWN         = "unknown"         # Unknown face (red)
 STATUS_LOW_CONFIDENCE  = "low_confidence"  # Below threshold (gray)
 STATUS_INTERNAL        = "internal"        # Internal team member (blue, not counted)
+STATUS_NEW_FACE        = "new_face"        # Newly registered person (orange)
 
 DEBOUNCE_MINUTES = 5
+
+
+class ImageQualityChecker:
+    """
+    Validates image quality before saving attendance evidence.
+    Ensures only clear, sharp, well-exposed images are stored.
+    """
+    
+    # Quality thresholds (tuned for face crops)
+    MIN_LAPLACIAN_VARIANCE = 25.0  # Lower = blurrier; reject motion blur
+    MIN_BRIGHTNESS = 40            # Avoid too-dark images (0-255 scale)
+    MAX_BRIGHTNESS = 215           # Avoid too-bright/overexposed images
+    MIN_CONTRAST = 30              # Avoid flat/washed out images
+    
+    @staticmethod
+    def is_image_blurry(image: np.ndarray, threshold: float = MIN_LAPLACIAN_VARIANCE) -> bool:
+        """
+        Detect blur using Laplacian variance (Tenengrad method).
+        
+        High variance = sharp image
+        Low variance = blurry/motion-blurred image
+        
+        Args:
+            image: BGR or RGB image
+            threshold: Laplacian variance threshold
+            
+        Returns:
+            True if image is blurry (reject), False if sharp (accept)
+        """
+        if image is None or image.size == 0:
+            return True
+        
+        try:
+            # Convert to grayscale for variance calculation
+            if image.ndim == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            else:
+                gray = image
+            
+            # Compute Laplacian variance
+            laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+            
+            is_blurry = laplacian_var < threshold
+            logger.debug(f"Blur check: variance={laplacian_var:.1f} (threshold={threshold}) -> {'BLURRY' if is_blurry else 'SHARP'}")
+            
+            return is_blurry
+        except Exception as e:
+            logger.debug(f"Blur detection error: {e}")
+            return False
+    
+    @staticmethod
+    def get_image_brightness(image: np.ndarray) -> float:
+        """
+        Calculate average brightness of image (0-255 scale).
+        
+        Used to reject too-dark or overexposed images.
+        """
+        if image is None or image.size == 0:
+            return 0
+        
+        try:
+            if image.ndim == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            else:
+                gray = image
+            
+            brightness = np.mean(gray)
+            return brightness
+        except Exception:
+            return 127  # Default to neutral
+    
+    @staticmethod
+    def get_image_contrast(image: np.ndarray) -> float:
+        """
+        Calculate image contrast using standard deviation of pixel values.
+        
+        Used to reject flat/washed-out images.
+        """
+        if image is None or image.size == 0:
+            return 0
+        
+        try:
+            if image.ndim == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            else:
+                gray = image
+            
+            contrast = np.std(gray)
+            return contrast
+        except Exception:
+            return 0
+    
+    @staticmethod
+    def check_image_quality(
+        image: np.ndarray,
+        person_id: str = "unknown",
+        confidence: float = 0.0,
+    ) -> tuple[bool, str]:
+        """
+        Comprehensive image quality check.
+        
+        Args:
+            image: Face crop image to validate
+            person_id: Person ID (for logging)
+            confidence: Recognition confidence (for logging)
+            
+        Returns:
+            (is_valid: bool, reason: str)
+            - is_valid=True if image passes all checks
+            - reason explains why image was rejected (if applicable)
+        """
+        if image is None or image.size == 0:
+            return False, "Image is empty"
+        
+        if image.ndim != 3 or image.shape[2] != 3:
+            return False, f"Invalid image shape: {image.shape}"
+        
+        # Check 1: Blur detection
+        if ImageQualityChecker.is_image_blurry(image):
+            return False, f"Image too blurry (motion detected) - REJECTED for {person_id}"
+        
+        # Check 2: Brightness
+        brightness = ImageQualityChecker.get_image_brightness(image)
+        if brightness < ImageQualityChecker.MIN_BRIGHTNESS:
+            return False, f"Image too dark (brightness={brightness:.0f}) - REJECTED for {person_id}"
+        if brightness > ImageQualityChecker.MAX_BRIGHTNESS:
+            return False, f"Image overexposed (brightness={brightness:.0f}) - REJECTED for {person_id}"
+        
+        # Check 3: Contrast
+        contrast = ImageQualityChecker.get_image_contrast(image)
+        if contrast < ImageQualityChecker.MIN_CONTRAST:
+            return False, f"Image too flat/low contrast (contrast={contrast:.0f}) - REJECTED for {person_id}"
+        
+        # All checks passed
+        logger.info(
+            f"✅ Image quality OK for {person_id} | "
+            f"Sharpness={cv2.Laplacian(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var():.1f}, "
+            f"Brightness={brightness:.0f}, Contrast={contrast:.0f}"
+        )
+        return True, "Image quality passed all checks"
 
 
 class AttendanceResult:
@@ -209,20 +351,26 @@ class AttendanceRecorder:
                 confidence=confidence,
                 image_path=photo_path,
             )
+            # For newly registered persons, store the first photo as reference
+            if recognition.is_new:
+                self.db.update_person_reference_photo(person_id, photo_path)
 
         self.memory.mark_person(person_id)
         self._session_marked_count += 1
 
+        status = STATUS_NEW_FACE if recognition.is_new else STATUS_MARKED
         logger.info(
-            "COUNTED: %s | count=%s | confidence=%.2f%% | time=%s | photo=%s",
-            person_id, count, confidence * 100,
+            "COUNTED: %s | %s | count=%s | confidence=%.2f%% | time=%s | photo=%s",
+            person_id,
+            "NEW REGISTRATION" if recognition.is_new else "returning",
+            count, confidence * 100,
             now.strftime("%H:%M:%S"), photo_path or "not saved",
         )
 
         return AttendanceResult(
             person_id=person_id,
             confidence=confidence,
-            status=STATUS_MARKED,
+            status=status,
             count=count,
             display_name=recognition.display_name,
         )
@@ -267,8 +415,26 @@ class AttendanceRecorder:
         confidence: float,
         face_image: Optional[np.ndarray],
     ) -> Optional[str]:
-        """Save the face crop for one counted attendance event."""
+        """
+        Save the face crop for one counted attendance event.
+        
+        Quality checks ensure only clear, sharp images are stored as evidence.
+        Blurry or poorly exposed images are rejected and not saved.
+        """
         if self.photos_dir is None or face_image is None or face_image.size == 0:
+            return None
+
+        # Quality check BEFORE saving
+        is_valid, reason = ImageQualityChecker.check_image_quality(
+            face_image, 
+            person_id=person_id,
+            confidence=confidence
+        )
+        
+        if not is_valid:
+            logger.warning(
+                f"⚠️  Image rejected for {person_id} (conf={confidence:.2%}): {reason}"
+            )
             return None
 
         try:
@@ -279,9 +445,18 @@ class AttendanceRecorder:
                 char if char.isalnum() or char in ("-", "_") else "_"
                 for char in person_id
             )
+            
+            # Add quality indicators to filename
+            laplacian_var = cv2.Laplacian(
+                cv2.cvtColor(face_image, cv2.COLOR_BGR2GRAY),
+                cv2.CV_64F
+            ).var()
+            brightness = ImageQualityChecker.get_image_brightness(face_image)
+            
             filename = (
                 f"{timestamp}_{safe_person_id}_count-{count}_"
-                f"conf-{int(confidence * 100):03d}.jpg"
+                f"conf-{int(confidence * 100):03d}_"
+                f"sharp-{int(laplacian_var):03d}.jpg"
             )
             output_path = date_dir / filename
 
@@ -294,10 +469,22 @@ class AttendanceRecorder:
             else:
                 image_bgr = image
 
-            if not cv2.imwrite(str(output_path), image_bgr):
+            # Use high quality JPEG compression
+            success = cv2.imwrite(
+                str(output_path), 
+                image_bgr,
+                [cv2.IMWRITE_JPEG_QUALITY, 95]  # 95/100 quality to preserve details
+            )
+            
+            if not success:
                 logger.warning("OpenCV did not save attendance photo: %s", output_path)
                 return None
 
+            logger.info(
+                f"📸 HIGH-QUALITY photo saved: {person_id} | "
+                f"Sharpness={laplacian_var:.0f} | Brightness={brightness:.0f} | "
+                f"{output_path.name}"
+            )
             return output_path.relative_to(self.photos_dir.parent).as_posix()
         except Exception as exc:
             logger.warning("Failed to save attendance photo for %s: %s", person_id, exc)
