@@ -55,9 +55,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self._send_json({"ok": True, "members": get_internal_team()})
             return
 
-        if (
-            parsed.path.startswith("/attendance_photos/")
-            or parsed.path.startswith("/internal_team_photos/")
+        if parsed.path == "/api/pending-faces":
+            self._send_json(get_pending_faces())
+            return
+
+        if parsed.path.startswith("/attendance_photos/") or parsed.path.startswith(
+            "/internal_team_photos/"
         ):
             self._send_managed_image(parsed.path)
             return
@@ -68,6 +71,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/internal-team":
             self._handle_internal_team_post()
+            return
+
+        if parsed.path == "/api/register-face":
+            self._handle_register_face()
+            return
+
+        if parsed.path == "/api/dismiss-face":
+            self._handle_dismiss_face()
             return
 
         self.send_error(404)
@@ -115,6 +126,40 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         except Exception as exc:
             self._send_json({"ok": False, "error": str(exc)}, status=500)
 
+    def _handle_register_face(self):
+        try:
+            body = self._read_json_body()
+            if body is None:
+                return
+            result = register_pending_face(body)
+            status = 200 if result.get("ok") else 400
+            self._send_json(result, status=status)
+        except Exception as exc:
+            self._send_json({"ok": False, "error": str(exc)}, status=500)
+
+    def _handle_dismiss_face(self):
+        try:
+            body = self._read_json_body()
+            if body is None:
+                return
+            result = dismiss_pending_face(body)
+            status = 200 if result.get("ok") else 400
+            self._send_json(result, status=status)
+        except Exception as exc:
+            self._send_json({"ok": False, "error": str(exc)}, status=500)
+
+    def _read_json_body(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0:
+                self._send_json({"ok": False, "error": "Empty body"}, status=400)
+                return None
+            raw = self.rfile.read(length)
+            return json.loads(raw)
+        except (ValueError, json.JSONDecodeError) as exc:
+            self._send_json({"ok": False, "error": f"Invalid JSON: {exc}"}, status=400)
+            return None
+
 
 def get_connection() -> sqlite3.Connection:
     """Open a short-lived read-only SQLite connection."""
@@ -128,7 +173,9 @@ def ensure_database_schema():
     """Run lightweight migrations before dashboard reads/writes."""
     from database import DatabaseManager
 
-    DatabaseManager(DATABASE_PATH)
+    db = DatabaseManager(DATABASE_PATH)
+    db.ensure_pending_faces_table()
+    return db
 
 
 def get_dashboard_summary() -> dict:
@@ -136,17 +183,22 @@ def get_dashboard_summary() -> dict:
     ensure_database_schema()
     today = date.today().isoformat()
     now = datetime.now()
-    active_cutoff = (now - timedelta(minutes=ACTIVE_WINDOW_MINUTES)).strftime("%H:%M:%S")
+    active_cutoff = (now - timedelta(minutes=ACTIVE_WINDOW_MINUTES)).strftime(
+        "%H:%M:%S"
+    )
 
     try:
         with get_connection() as conn:
-            has_photos = conn.execute(
-                """
+            has_photos = (
+                conn.execute(
+                    """
                 SELECT 1
                 FROM sqlite_master
                 WHERE type = 'table' AND name = 'attendance_photos'
                 """
-            ).fetchone() is not None
+                ).fetchone()
+                is not None
+            )
 
             photo_select = (
                 """
@@ -368,13 +420,138 @@ def compute_face_signature_and_match(rgb: np.ndarray):
     return identity.compute_signature_and_match(rgb)
 
 
+def get_pending_faces() -> dict:
+    """Return all pending faces awaiting frontend registration."""
+    from database import DatabaseManager
+
+    db = DatabaseManager(DATABASE_PATH)
+    db.ensure_pending_faces_table()
+    rows = db.get_pending_faces()
+    faces = []
+    for row in rows:
+        faces.append(
+            {
+                "id": row["id"],
+                "image_path": row["image_path"],
+                "photo_url": f"/{row['image_path']}",
+                "quality_score": round(float(row["quality_score"]), 1),
+                "best_similarity": round(float(row["best_similarity"]), 3),
+                "frames_seen": int(row["frames_seen"]),
+                "created_at": row["created_at"],
+            }
+        )
+    return {"ok": True, "pending_count": len(faces), "faces": faces}
+
+
+def register_pending_face(body: dict) -> dict:
+    """
+    Register a pending face as a new person.
+
+    Expected body: {"id": 123, "name": "John Doe"}
+    """
+    pending_id = body.get("id")
+    name = (body.get("name") or "").strip()
+    if not pending_id or not name:
+        return {"ok": False, "error": "Both 'id' and 'name' are required."}
+
+    from database import DatabaseManager
+
+    db = DatabaseManager(DATABASE_PATH)
+    db.ensure_pending_faces_table()
+
+    # Get the pending face row
+    try:
+        with db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM pending_faces WHERE id = ? AND status = 'pending'",
+                (int(pending_id),),
+            )
+            row = cursor.fetchone()
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+    if row is None:
+        return {"ok": False, "error": "Pending face not found or already resolved."}
+
+    image_path = row["image_path"]
+    full_path = PROJECT_DIR / image_path
+
+    if not full_path.is_file():
+        return {"ok": False, "error": "Face image file not found on disk."}
+
+    # Load the face crop and compute embedding
+    try:
+        from PIL import Image
+
+        image = Image.open(str(full_path)).convert("RGB")
+        rgb = np.array(image)
+
+        from face_identity import FaceIdentityManager
+
+        identity = FaceIdentityManager(db)
+        reg_result = identity.register_new_face(rgb, temp_name=name)
+
+        if reg_result is None:
+            return {
+                "ok": False,
+                "error": "Could not compute face embedding from image.",
+            }
+    except Exception as e:
+        return {"ok": False, "error": f"Registration failed: {e}"}
+
+    # Update the pending face record
+    db.resolve_pending_face(
+        pending_id=int(pending_id),
+        status="registered",
+        person_id=reg_result.person_id,
+        display_name=name,
+    )
+
+    # Also update the person's display name
+    db.update_person_display_name(reg_result.person_id, name)
+
+    # Store as reference photo
+    relative_path = full_path.relative_to(PROJECT_DIR).as_posix()
+    db.update_person_reference_photo(reg_result.person_id, relative_path)
+
+    return {
+        "ok": True,
+        "person_id": reg_result.person_id,
+        "display_name": name,
+    }
+
+
+def dismiss_pending_face(body: dict) -> dict:
+    """
+    Dismiss a pending face (false positive / not needed).
+
+    Expected body: {"id": 123}
+    """
+    pending_id = body.get("id")
+    if not pending_id:
+        return {"ok": False, "error": "'id' is required."}
+
+    from database import DatabaseManager
+
+    db = DatabaseManager(DATABASE_PATH)
+    db.ensure_pending_faces_table()
+    ok = db.resolve_pending_face(
+        pending_id=int(pending_id),
+        status="dismissed",
+    )
+    if not ok:
+        return {"ok": False, "error": "Could not dismiss face."}
+    return {"ok": True}
+
+
 def parse_multipart_form(content_type: str, body: bytes) -> dict[str, tuple]:
     """Parse multipart/form-data into {field_name: (value, filename)}."""
     message = BytesParser(policy=default).parsebytes(
-        (
-            f"Content-Type: {content_type}\r\n"
-            "MIME-Version: 1.0\r\n\r\n"
-        ).encode("utf-8") + body
+        (f"Content-Type: {content_type}\r\n" "MIME-Version: 1.0\r\n\r\n").encode(
+            "utf-8"
+        )
+        + body
     )
     fields = {}
     if not message.is_multipart():

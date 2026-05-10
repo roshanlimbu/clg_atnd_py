@@ -1,102 +1,384 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Attendance Dashboard</title>
-    <link rel="stylesheet" href="/styles.css">
-  </head>
-  <body>
-    <main class="shell">
-      <header class="topbar">
-        <div>
-          <h1>Attendance Dashboard</h1>
-          <p id="sync-label">Syncing with local database...</p>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FaceTrack — Live Attendance Intelligence</title>
+  <meta name="description"
+    content="Real-time face recognition attendance system for events and public spaces. Tracks and logs visitors while ignoring registered internal team members.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+
+<body>
+
+  <!-- ── Top Navigation Bar ── -->
+  <nav class="navbar" role="navigation" aria-label="Main navigation">
+    <div class="navbar-inner">
+      <div class="brand">
+        <div class="brand-icon" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
         </div>
-        <div class="sync">
-          <span id="sync-dot" class="dot pending"></span>
+        <span class="brand-name">FaceTrack</span>
+        <span class="brand-tag">Live</span>
+      </div>
+
+      <div class="nav-center">
+        <button class="nav-tab active" id="tab-visitors" onclick="switchTab('visitors')" aria-selected="true"
+          role="tab">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+          Visitors
+        </button>
+        <button class="nav-tab" id="tab-pending" onclick="switchTab('pending')" role="tab">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12 6 12 12 16 14" />
+          </svg>
+          Pending
+          <span class="nav-badge" id="pending-badge" hidden>0</span>
+        </button>
+        <button class="nav-tab" id="tab-team" onclick="switchTab('team')" role="tab">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          </svg>
+          Internal Team
+        </button>
+        <button class="nav-tab" id="tab-analytics" onclick="switchTab('analytics')" role="tab">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="20" x2="18" y2="10" />
+            <line x1="12" y1="20" x2="12" y2="4" />
+            <line x1="6" y1="20" x2="6" y2="14" />
+          </svg>
+          Analytics
+        </button>
+      </div>
+
+      <div class="nav-right">
+        <div class="sync-pill" id="sync-pill">
+          <span class="pulse-dot" id="sync-dot"></span>
           <span id="sync-status">Connecting</span>
+          <span class="sync-timer" id="next-sync">–</span>
         </div>
-      </header>
+      </div>
+    </div>
+  </nav>
 
-      <section class="metrics" aria-label="Attendance metrics">
-        <article class="metric">
-          <span class="metric-label">Attendance Count</span>
-          <strong id="total-count">0</strong>
-        </article>
-        <article class="metric">
-          <span class="metric-label">Active Faces</span>
-          <strong id="active-faces">0</strong>
-        </article>
-        <article class="metric">
-          <span class="metric-label">Unique Faces</span>
-          <strong id="unique-faces">0</strong>
-        </article>
-        <article class="metric">
-          <span class="metric-label">Next Sync</span>
-          <strong id="next-sync">10s</strong>
-        </article>
-      </section>
+  <!-- ── Stats Row ── -->
+  <section class="stats-strip" aria-label="Live statistics">
+    <div class="stats-strip-inner">
+      <div class="stat-card" id="stat-total">
+        <div class="stat-icon visitors-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+        </div>
+        <div class="stat-info">
+          <span class="stat-value" id="total-count">0</span>
+          <span class="stat-label">Total Visitors</span>
+        </div>
+      </div>
 
-      <section class="content-grid">
-        <section class="panel">
-          <div class="panel-head">
-            <h2>Live Faces</h2>
-            <span id="active-window">Recent rows</span>
+      <div class="stat-card" id="stat-active">
+        <div class="stat-icon active-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10" />
+            <circle cx="12" cy="12" r="3" fill="currentColor" />
+          </svg>
+        </div>
+        <div class="stat-info">
+          <span class="stat-value" id="active-faces">0</span>
+          <span class="stat-label">Active Now</span>
+        </div>
+      </div>
+
+      <div class="stat-card" id="stat-unique">
+        <div class="stat-icon unique-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+            <circle cx="12" cy="7" r="4" />
+          </svg>
+        </div>
+        <div class="stat-info">
+          <span class="stat-value" id="unique-faces">0</span>
+          <span class="stat-label">Unique Faces</span>
+        </div>
+      </div>
+
+      <div class="stat-card" id="stat-team">
+        <div class="stat-icon team-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          </svg>
+        </div>
+        <div class="stat-info">
+          <span class="stat-value" id="team-count">0</span>
+          <span class="stat-label">Team (Ignored)</span>
+        </div>
+      </div>
+
+      <div class="stat-card" id="stat-date">
+        <div class="stat-icon date-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+            <line x1="16" y1="2" x2="16" y2="6" />
+            <line x1="8" y1="2" x2="8" y2="6" />
+            <line x1="3" y1="10" x2="21" y2="10" />
+          </svg>
+        </div>
+        <div class="stat-info">
+          <span class="stat-value stat-value--sm" id="today-date">–</span>
+          <span class="stat-label">Session Date</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Main Content ── -->
+  <main class="main-content" role="main">
+
+    <!-- ═══ TAB: VISITORS ═══ -->
+    <div class="tab-panel active" id="panel-visitors" role="tabpanel" aria-labelledby="tab-visitors">
+      <div class="panel-header">
+        <div>
+          <h1 class="panel-title">
+            <span class="dot-live" aria-hidden="true"></span>
+            Detected Visitors
+          </h1>
+          <p class="panel-subtitle" id="active-window">Showing recent attendance records — internal team excluded</p>
+        </div>
+        <div class="panel-actions">
+          <button class="btn-secondary" id="btn-refresh-visitors" onclick="fetchSummary()"
+            aria-label="Refresh visitor list">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="1 4 1 10 7 10" />
+              <path d="M3.51 15a9 9 0 1 0 .49-5" />
+            </svg>
+            Refresh
+          </button>
+          <div class="view-toggle" role="group" aria-label="View mode">
+            <button class="view-btn active" id="view-grid" onclick="setView('grid')" aria-pressed="true"
+              title="Grid view">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7" />
+                <rect x="14" y="3" width="7" height="7" />
+                <rect x="3" y="14" width="7" height="7" />
+                <rect x="14" y="14" width="7" height="7" />
+              </svg>
+            </button>
+            <button class="view-btn" id="view-table" onclick="setView('table')" aria-pressed="false" title="Table view">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="8" y1="6" x2="21" y2="6" />
+                <line x1="8" y1="12" x2="21" y2="12" />
+                <line x1="8" y1="18" x2="21" y2="18" />
+                <line x1="3" y1="6" x2="3.01" y2="6" />
+                <line x1="3" y1="12" x2="3.01" y2="12" />
+                <line x1="3" y1="18" x2="3.01" y2="18" />
+              </svg>
+            </button>
           </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Face ID</th>
-                  <th>Photo</th>
-                  <th>Count</th>
-                  <th>First Seen</th>
-                  <th>Last Seen</th>
-                  <th>Confidence</th>
-                </tr>
-              </thead>
-              <tbody id="faces-body">
-                <tr>
-                  <td colspan="6" class="empty">No face records yet.</td>
-                </tr>
-              </tbody>
-            </table>
+        </div>
+      </div>
+
+      <!-- GRID VIEW -->
+      <div class="visitor-grid" id="visitor-grid">
+        <div class="empty-state" id="visitor-empty">
+          <div class="empty-icon" aria-hidden="true">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+              <circle cx="9" cy="7" r="4" />
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            </svg>
           </div>
-        </section>
+          <p>No visitor records yet.</p>
+          <p class="empty-sub">Faces detected by the camera will appear here automatically.</p>
+        </div>
+      </div>
 
-        <aside class="side-stack">
-          <section class="panel">
-            <div class="panel-head">
-              <h2>Internal Team</h2>
-              <span id="internal-count">0 saved</span>
+      <!-- TABLE VIEW (hidden by default) -->
+      <div class="visitor-table-wrap" id="visitor-table" hidden>
+        <table aria-label="Visitor attendance records">
+          <thead>
+            <tr>
+              <th scope="col">Photo</th>
+              <th scope="col">Face ID</th>
+              <th scope="col">First Seen</th>
+              <th scope="col">Last Seen</th>
+              <th scope="col">Count</th>
+              <th scope="col">Confidence</th>
+            </tr>
+          </thead>
+          <tbody id="faces-body">
+            <tr>
+              <td colspan="6" class="empty">No visitor records yet.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ═══ TAB: PENDING FACES ═══ -->
+    <div class="tab-panel" id="panel-pending" role="tabpanel" aria-labelledby="tab-pending" hidden>
+      <div class="panel-header">
+        <div>
+          <h2 class="panel-title">New Face Queue</h2>
+          <p class="panel-subtitle">Unrecognized faces awaiting operator review — register or dismiss</p>
+        </div>
+        <span class="badge-count" id="pending-count">0 pending</span>
+      </div>
+      <div class="pending-grid" id="pending-faces">
+        <div class="empty-state">
+          <div class="empty-icon" aria-hidden="true">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <circle cx="12" cy="12" r="10" />
+              <polyline points="12 6 12 12 16 14" />
+            </svg>
+          </div>
+          <p>No pending faces.</p>
+          <p class="empty-sub">New unregistered faces will queue here for your review.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ TAB: INTERNAL TEAM ═══ -->
+    <div class="tab-panel" id="panel-team" role="tabpanel" aria-labelledby="tab-team" hidden>
+      <div class="two-col-layout">
+
+        <!-- Left: Add member -->
+        <div class="team-add-panel">
+          <div class="team-add-header">
+            <div class="shield-icon" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
             </div>
-            <form id="internal-form" class="internal-form">
-              <label>
-                <span>Name</span>
-                <input id="internal-name" name="name" type="text" autocomplete="name" required>
-              </label>
-              <label>
-                <span>Photo</span>
-                <input id="internal-photo" name="photo" type="file" accept="image/*" required>
-              </label>
-              <button type="submit">Save Member</button>
-              <p id="internal-status" class="form-status" role="status"></p>
-            </form>
-            <ul id="internal-list" class="internal-list"></ul>
-          </section>
-
-          <section class="panel">
-            <div class="panel-head">
-              <h2>Client Samples</h2>
-              <span id="sample-count">0 samples</span>
+            <div>
+              <h2 class="panel-title">Register Team Member</h2>
+              <p class="panel-subtitle">Team members are detected but <strong>never logged</strong> in attendance</p>
             </div>
-            <ol id="sample-list" class="sample-list"></ol>
-          </section>
-        </aside>
-      </section>
-    </main>
+          </div>
 
-    <script src="/app.js" defer></script>
-  </body>
+          <div class="how-it-works">
+            <div class="hiw-step">
+              <span class="hiw-num">1</span>
+              <span>Upload a clear face photo of the team member</span>
+            </div>
+            <div class="hiw-step">
+              <span class="hiw-num">2</span>
+              <span>System extracts their face embedding</span>
+            </div>
+            <div class="hiw-step">
+              <span class="hiw-num">3</span>
+              <span>Camera detects them but silently ignores their attendance</span>
+            </div>
+          </div>
+
+          <form id="internal-form" class="add-member-form" novalidate>
+            <div class="form-field">
+              <label for="internal-name" class="field-label">Full Name <span class="required">*</span></label>
+              <input id="internal-name" name="name" type="text" class="field-input" placeholder="e.g. Roshan Limbu"
+                autocomplete="name" required>
+            </div>
+            <div class="form-field">
+              <label for="internal-photo" class="field-label">Face Photo <span class="required">*</span></label>
+              <div class="photo-drop" id="photo-drop" aria-describedby="photo-hint">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+                  aria-hidden="true">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+                <p>Drop photo here or <span class="link-text">browse</span></p>
+                <p class="photo-hint" id="photo-hint">JPG, PNG or WebP · Max 8 MB · Clear frontal face</p>
+                <input id="internal-photo" name="photo" type="file" accept="image/*" required class="photo-input"
+                  aria-label="Upload face photo">
+              </div>
+              <div class="photo-preview-wrap" id="photo-preview-wrap" hidden>
+                <img id="photo-preview-img" class="photo-preview" src="" alt="Selected photo preview">
+                <button type="button" class="photo-clear" id="photo-clear" aria-label="Remove photo">✕</button>
+              </div>
+            </div>
+            <button type="submit" class="btn-primary" id="submit-btn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              Add to Team
+            </button>
+            <p id="internal-status" class="form-status" role="status" aria-live="polite"></p>
+          </form>
+        </div>
+
+        <!-- Right: Team list -->
+        <div class="team-list-panel">
+          <div class="team-list-header">
+            <h2 class="panel-title">Registered Team</h2>
+            <span class="badge-count" id="internal-count">0 members</span>
+          </div>
+          <ul id="internal-list" class="team-member-list" role="list" aria-label="Registered internal team members">
+            <li class="team-empty">No team members registered yet.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ TAB: ANALYTICS ═══ -->
+    <div class="tab-panel" id="panel-analytics" role="tabpanel" aria-labelledby="tab-analytics" hidden>
+      <div class="panel-header">
+        <div>
+          <h2 class="panel-title">Session Analytics</h2>
+          <p class="panel-subtitle">Live polling history — last <span id="max-samples">12</span> syncs</p>
+        </div>
+      </div>
+      <div class="analytics-grid">
+        <div class="analytics-card">
+          <h3 class="analytics-card-title">Polling History</h3>
+          <div class="chart-wrap">
+            <canvas id="chart-canvas" width="600" height="180" aria-label="Visitor count over time chart"></canvas>
+          </div>
+          <ol id="sample-list" class="sample-list" reversed aria-label="Recent sync snapshots">
+            <li class="empty">No data yet — syncing...</li>
+          </ol>
+        </div>
+        <div class="analytics-card">
+          <h3 class="analytics-card-title">System Info</h3>
+          <dl class="info-list" id="system-info">
+            <dt>Last Synced</dt>
+            <dd id="info-last-sync">–</dd>
+            <dt>Active Window</dt>
+            <dd id="info-window">5 min</dd>
+            <dt>Row Limit</dt>
+            <dd id="info-row-limit">100</dd>
+            <dt>Poll Interval</dt>
+            <dd id="info-poll">10s</dd>
+            <dt>Mode</dt>
+            <dd><span class="badge-mode">Public Event</span></dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ── Toast Notification ── -->
+  <div class="toast" id="toast" role="alert" aria-live="assertive" aria-atomic="true" hidden></div>
+
+  <script src="/app.js" defer></script>
+</body>
+
 </html>

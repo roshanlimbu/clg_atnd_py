@@ -33,7 +33,6 @@ from datetime import datetime
 import numpy as np
 
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
@@ -42,28 +41,29 @@ import numpy as np
 BASE_DIR = Path(__file__).parent
 
 # File paths
-MODELS_DIR      = BASE_DIR / "models"
+MODELS_DIR = BASE_DIR / "models"
 CONVERTED_MODEL = BASE_DIR / "converted_model" / "model.h5"
-METADATA_FILE   = MODELS_DIR / "metadata.json"
-DATABASE_FILE   = BASE_DIR / "attendance.db"
-MEMORY_DIR      = BASE_DIR / "attendance_memory"
-LOGS_DIR        = BASE_DIR / "logs"
-PHOTOS_DIR      = BASE_DIR / "attendance_photos"
+METADATA_FILE = MODELS_DIR / "metadata.json"
+DATABASE_FILE = BASE_DIR / "attendance.db"
+MEMORY_DIR = BASE_DIR / "attendance_memory"
+LOGS_DIR = BASE_DIR / "logs"
+PHOTOS_DIR = BASE_DIR / "attendance_photos"
 
 # Camera settings
-CAMERA_INDEX    = 0       # 0 = default device camera
-SAMPLE_EVERY    = 5       # Process every 5th frame
-DISPLAY_WIDTH   = 1280
-DISPLAY_HEIGHT  = 720
+CAMERA_INDEX = 0  # 0 = default device camera
+SAMPLE_EVERY = 5  # Process every 5th frame
+DISPLAY_WIDTH = 1280
+DISPLAY_HEIGHT = 720
 
 # Display settings
-SHOW_FPS        = True
+SHOW_FPS = True
 SHOW_STATUS_BAR = True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LOGGING SETUP
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def setup_logging():
     """Configure logging to both console and daily rotating file."""
@@ -94,6 +94,7 @@ def setup_logging():
 # PRE-FLIGHT CHECKS
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def pre_flight_checks(logger):
     """
     STEP 5 — Verify all required files exist before starting the main loop.
@@ -113,7 +114,7 @@ def pre_flight_checks(logger):
         passed = False
 
     checks = [
-        (DATABASE_FILE,   "SQLite database — run python setup.py"),
+        (DATABASE_FILE, "SQLite database — run python setup.py"),
     ]
 
     for path, description in checks:
@@ -150,17 +151,20 @@ def _scale_faces_for_display(detected_faces, src_shape, dst_shape):
         ny1 = max(0, min(dst_h, int(round(y1 * scale_y))))
         nx2 = max(0, min(dst_w, int(round(x2 * scale_x))))
         ny2 = max(0, min(dst_h, int(round(y2 * scale_y))))
-        scaled.append(type(face)(
-            bbox=(nx1, ny1, nx2, ny2),
-            aligned_image=face.aligned_image,
-            detection_confidence=face.detection_confidence,
-        ))
+        scaled.append(
+            type(face)(
+                bbox=(nx1, ny1, nx2, ny2),
+                aligned_image=face.aligned_image,
+                detection_confidence=face.detection_confidence,
+            )
+        )
     return scaled
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FPS TRACKER
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class FPSTracker:
     """Simple rolling-average FPS calculator."""
@@ -186,6 +190,7 @@ class FPSTracker:
 # RESULT.MD GENERATION
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def write_result_md(db, recorder, output_path=None):
     """Write a summarized attendance report to result.md."""
     if output_path is None:
@@ -209,7 +214,9 @@ def write_result_md(db, recorder, output_path=None):
     lines.append(f"| Total attendance counts today | {stats['today_total']} |")
     lines.append(f"| Registered persons (all-time) | {stats['registered_persons']} |")
     lines.append(f"| Session: faces counted | {stats['session_marked']} |")
-    lines.append(f"| Session: debounced sightings | {stats['session_duplicates_blocked']} |")
+    lines.append(
+        f"| Session: debounced sightings | {stats['session_duplicates_blocked']} |"
+    )
     lines.append(f"| Session: unknown faces | {stats['session_unknowns']} |")
     lines.append("")
 
@@ -244,9 +251,73 @@ def write_result_md(db, recorder, output_path=None):
     return output_path
 
 
+logger = logging.getLogger(__name__)
+
+PENDING_FACES_DIR = PHOTOS_DIR / "pending"
+
+
+def _save_pending_face(track, db, photos_dir, face_tracker):
+    """
+    Save a confirmed new face crop to disk for frontend review.
+
+    Instead of auto-registering, we:
+    1. Save the best quality crop to attendance_photos/pending/
+    2. Record metadata in the pending_faces table
+    3. Mark the track as registered (to prevent re-capture)
+    The frontend operator then decides to register or dismiss.
+    """
+    import cv2
+
+    if track.best_crop is None:
+        return
+
+    pending_dir = photos_dir / "pending"
+    pending_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"pending_{timestamp}_track{track.track_id}.jpg"
+    filepath = pending_dir / filename
+    relative_path = filepath.relative_to(photos_dir.parent).as_posix()
+
+    # Save the best crop
+    try:
+        crop_bgr = cv2.cvtColor(track.best_crop, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(str(filepath), crop_bgr)
+    except Exception as e:
+        logger.error("Failed to save pending face crop: %s", e)
+        return
+
+    # Record in DB for frontend to pick up
+    db.record_pending_face(
+        image_path=relative_path,
+        quality_score=track.best_quality,
+        best_similarity=track.best_raw_similarity,
+        frames_seen=track.frames_seen,
+    )
+
+    # Mark track so we don't recapture it
+    from face_identity import FaceIdentityResult
+
+    dummy_result = FaceIdentityResult(
+        person_id="pending",
+        confidence=0.0,
+        zone="registered",
+    )
+    face_tracker.mark_registered(track.track_id, dummy_result)
+
+    logger.info(
+        "PENDING FACE saved: %s (seen %d frames, quality=%.1f, best_sim=%.3f)",
+        filename,
+        track.frames_seen,
+        track.best_quality,
+        track.best_raw_similarity,
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN PROGRAM
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def main():
     logger = setup_logging()
@@ -265,26 +336,33 @@ def main():
 
     # Database
     from database import DatabaseManager
+
     db = DatabaseManager(DATABASE_FILE)
-    logger.info("✅ Database connected")
+    db.ensure_auto_registration_table()  # Create auto_registered_visitors if needed
+    db.ensure_pending_faces_table()  # Create pending_faces for frontend registration
+    logger.info("Database connected")
 
     # Memory manager (loads today's file / creates fresh one)
     from memory import MemoryManager
+
     memory = MemoryManager(MEMORY_DIR)
     logger.info("✅ Daily memory loaded")
 
     # Face detector (YOLOv8n + MediaPipe)
     from detector import FaceDetector
+
     detector = FaceDetector()
     logger.info("✅ Face detector ready")
 
     # Face identity manager (generated IDs; no fixed trained labels)
     from face_identity import FaceIdentityManager
+
     identity_manager = FaceIdentityManager(db)
     logger.info("✅ Face identity manager ready")
 
     # Attendance recorder
     from attendance import AttendanceRecorder
+
     recorder = AttendanceRecorder(db, memory, PHOTOS_DIR)
     logger.info("✅ Attendance recorder ready")
 
@@ -292,6 +370,7 @@ def main():
     # device profile). The feed itself draws the status bar onto frames,
     # so we don't need to draw it here.
     from camera import CameraFeed
+
     camera = CameraFeed(
         camera_index=CAMERA_INDEX,
         capture_width=DISPLAY_WIDTH,
@@ -304,6 +383,7 @@ def main():
 
     # Face tracker — tracks faces across frames, recognizes once per person
     from tracker import FaceTracker
+
     face_tracker = FaceTracker()
 
     logger.info("\nSystem ready. Starting live feed...")
@@ -311,6 +391,7 @@ def main():
 
     # ── Sharp frame buffer for quality image selection ──────────────────
     from frame_buffer import SharpFrameBuffer
+
     sharp_buffer = SharpFrameBuffer()
 
     # ── STEP 6 — Start camera feed ───────────────────────────────────────
@@ -352,8 +433,6 @@ def main():
                     face_tracker.update(detected_faces)
 
                     # ── STEP 10b — Recognize only qualified tracks ───────
-                    # Tracker picks the best quality frame per person and
-                    # only triggers ArcFace for new/unrecognized tracks.
                     tracks_to_recognize = face_tracker.get_tracks_to_recognize()
                     if tracks_to_recognize:
                         face_images = [t.best_crop for t in tracks_to_recognize]
@@ -361,26 +440,77 @@ def main():
                         for track, recog in zip(tracks_to_recognize, new_recognitions):
                             face_tracker.store_recognition(track.track_id, recog)
 
+                    # ── STEP 10c — Auto-register genuinely new faces ─────────
+                    # This is the CORE of the unknown-tracking system:
+                    # - Internal team = known → silent pass (excluded)
+                    # - Random unknown people → confirmed over 3+ frames →
+                    #   auto-registered as a new guest AND attendance recorded NOW.
+                    tracks_to_register = face_tracker.get_tracks_to_register()
+                    for track in tracks_to_register:
+                        result = identity_manager.register_new_face(track.best_crop)
+                        if result is not None:
+                            face_tracker.mark_registered(track.track_id, result)
+                            logger.info(
+                                "NEW UNKNOWN PERSON registered and counted: %s (Track %d)",
+                                result.person_id,
+                                track.track_id,
+                            )
+                            # ── Record first attendance for this new unknown person ──
+                            # We do this immediately here because on the next frames the
+                            # track will be zone='registered' with above_threshold=True
+                            # and will continue to be debounce-counted normally.
+                            first_hit = recorder.process_recognition(
+                                result,
+                                track.best_crop,
+                            )
+                            logger.info(
+                                "First attendance recorded for %s: status=%s, count=%s",
+                                result.person_id,
+                                first_hit.status,
+                                first_hit.count,
+                            )
+
                     logger.debug(
-                        "Tracker: %d active, %d total, %d recognized this frame",
+                        "Tracker: %d active, %d silent, %d uncertain, %d pending_reg, %d recognized",
                         face_tracker.active_count,
-                        face_tracker.total_tracks,
+                        face_tracker.silent_pass_count,
+                        face_tracker.uncertain_count,
+                        face_tracker.pending_registration_count,
                         len(tracks_to_recognize),
                     )
 
-                    # ── STEPS 11+12+13 — Attendance for newly recognized ─
-                    # Only process attendance for tracks just recognized
-                    # (not every frame — the tracker handles deduplication)
-                    active_tracks = face_tracker.get_active_tracks()
-                    newly_recognized_ids = face_tracker.get_newly_recognized_track_ids()
+                    # ── STEPS 11+12+13 — Attendance (skip internal team) ──
+                    # Show ALL active tracks on screen (including internal)
+                    # but only record attendance for non-internal people
+                    from attendance import AttendanceResult, STATUS_INTERNAL
 
+                    all_active = face_tracker.get_active_tracks()
+
+                    # Separate internal from non-internal for attendance
                     recognitions = []
                     face_images_for_attendance = []
-                    for track in active_tracks:
+                    internal_tracks = []
+
+                    for track in all_active:
+                        if track.zone == "silent_pass":
+                            # Internal team — detected but NEVER counted
+                            internal_tracks.append(track)
+                            continue
                         if track.recognition_result is not None:
+                            # Skip uncertain/discarded — not ready yet
+                            if track.zone in ("uncertain", "discarded", "pending"):
+                                continue
+                            # Skip new_face zone — not registered yet,
+                            # will be handled by tracks_to_register above.
+                            if track.zone == "new_face":
+                                continue
+                            # 'matched' or 'registered' zone → count attendance
+                            # For registered: above_threshold=True, unknown=False, is_new=True
+                            # For matched: normal returning unknown guest
                             recognitions.append(track.recognition_result)
                             face_images_for_attendance.append(
-                                track.best_crop if track.best_crop is not None
+                                track.best_crop
+                                if track.best_crop is not None
                                 else track.current_crop
                             )
 
@@ -392,15 +522,84 @@ def main():
                     else:
                         attendance_results = []
 
-                    # Build display faces from all active tracks
+                    # ── Build display for ALL tracks (including internal) ──
                     from detector import DetectedFace
+
                     display_faces = []
-                    for track in active_tracks:
-                        display_faces.append(DetectedFace(
-                            bbox=track.bbox,
-                            aligned_image=track.current_crop if track.current_crop is not None else np.zeros((224,224,3), dtype=np.uint8),
-                            detection_confidence=track.detection_confidence,
-                        ))
+                    combined_results = []
+
+                    # First: non-internal tracks (have real attendance results)
+                    result_idx = 0
+                    for track in all_active:
+                        if track.zone == "silent_pass":
+                            continue  # Handle below
+                        display_faces.append(
+                            DetectedFace(
+                                bbox=track.bbox,
+                                aligned_image=(
+                                    track.current_crop
+                                    if track.current_crop is not None
+                                    else np.zeros((224, 224, 3), dtype=np.uint8)
+                                ),
+                                detection_confidence=track.detection_confidence,
+                            )
+                        )
+                        # Match attendance result to this track
+                        if (
+                            track.recognition_result is not None
+                            and track.zone not in ("uncertain", "discarded", "pending")
+                            and result_idx < len(attendance_results)
+                        ):
+                            combined_results.append(attendance_results[result_idx])
+                            result_idx += 1
+                        else:
+                            # Track without attendance result (uncertain/pending)
+                            combined_results.append(
+                                AttendanceResult(
+                                    person_id=(
+                                        getattr(
+                                            track.recognition_result, "person_id", "..."
+                                        )
+                                        if track.recognition_result
+                                        else "..."
+                                    ),
+                                    confidence=track.detection_confidence,
+                                    status="low_confidence",
+                                )
+                            )
+
+                    # Then: internal team tracks (blue box, "Not counted")
+                    for track in internal_tracks:
+                        display_faces.append(
+                            DetectedFace(
+                                bbox=track.bbox,
+                                aligned_image=(
+                                    track.current_crop
+                                    if track.current_crop is not None
+                                    else np.zeros((224, 224, 3), dtype=np.uint8)
+                                ),
+                                detection_confidence=track.detection_confidence,
+                            )
+                        )
+                        recog = track.recognition_result
+                        combined_results.append(
+                            AttendanceResult(
+                                person_id=(
+                                    getattr(recog, "person_id", "Internal")
+                                    if recog
+                                    else "Internal"
+                                ),
+                                confidence=(
+                                    getattr(recog, "confidence", 0.0) if recog else 0.0
+                                ),
+                                status=STATUS_INTERNAL,
+                                display_name=(
+                                    getattr(recog, "display_name", None)
+                                    if recog
+                                    else None
+                                ),
+                            )
+                        )
 
                     # Scale to display coordinates
                     display_faces = _scale_faces_for_display(
@@ -410,14 +609,20 @@ def main():
                     )
 
                     last_detected_faces = display_faces
-                    last_attendance_results = attendance_results
+                    last_attendance_results = combined_results
 
                     # Log any new markings
-                    for result in attendance_results:
+                    for result in combined_results:
                         if result.status == "marked":
                             logger.info(
                                 "COUNTED: %s — count=%s",
-                                result.person_id, result.count,
+                                result.person_id,
+                                result.count,
+                            )
+                        elif result.status == "new_face":
+                            logger.info(
+                                "NEW VISITOR COUNTED: %s — auto-registered",
+                                result.person_id,
                             )
                 else:
                     face_tracker.update([])  # Track disappearances

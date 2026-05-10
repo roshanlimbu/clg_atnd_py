@@ -41,6 +41,14 @@ MATCH_SIMILARITY_THRESHOLD = 0.35        # minimum similarity to consider a matc
 EMA_BLEND_SIMILARITY      = 0.65         # above this -> same angle, blend
 MAX_EMBEDDINGS_PER_PERSON  = 8
 
+# -- Three-zone confidence routing ------------------------------------------
+# Zone 1: CONFIDENT MATCH — definitely this person
+CONFIDENT_MATCH_THRESHOLD = 0.55
+# Zone 2: UNCERTAINTY — could be internal at bad angle, hold and wait
+# (Between NEW_FACE_THRESHOLD and CONFIDENT_MATCH_THRESHOLD)
+# Zone 3: GENUINELY NEW — not in the system at all
+NEW_FACE_THRESHOLD = 0.30
+
 
 @dataclass
 class FaceIdentityResult:
@@ -55,6 +63,10 @@ class FaceIdentityResult:
     role: str = "guest"
     head_pose: Optional[HeadPose] = None
     pose_angles: Optional[Dict[str, float]] = None
+
+    # Three-zone routing
+    zone: str = "unknown"          # "matched" | "uncertain" | "new_face"
+    raw_similarity: float = 0.0    # Raw FAISS cosine similarity
 
     @property
     def is_unknown(self) -> bool:
@@ -92,10 +104,11 @@ class FaceIdentityManager:
         compute_signature_and_match(face_image) -> tuple
     """
 
-    CACHE_REFRESH_SECONDS = 120
+    CACHE_REFRESH_SECONDS = 30
 
     def __init__(self, db_manager: DatabaseManager):
         self._model = self._load_arcface_model()
+        self._rec_model = self._load_recognition_model()
         self.db = db_manager
         self._head_pose_detector = None
 
@@ -147,6 +160,33 @@ class FaceIdentityManager:
                 "Check your internet connection for first-time download."
             ) from e
 
+    @staticmethod
+    def _load_recognition_model():
+        """Load standalone ArcFace recognition model for pre-aligned crops.
+
+        The FaceAnalysis.get() method runs face detection first, which
+        fails on pre-aligned 112x112 crops. This loads ONLY the
+        recognition (embedding) model for direct inference.
+        """
+        try:
+            from insightface.model_zoo import get_model
+            import os
+
+            model_path = os.path.expanduser(
+                "~/.insightface/models/buffalo_l/w600k_r50.onnx"
+            )
+            rec_model = get_model(model_path, providers=["CPUExecutionProvider"])
+            rec_model.prepare(ctx_id=-1)
+            logger.info("Standalone ArcFace recognition model loaded: %s", model_path)
+            return rec_model
+        except Exception as e:
+            logger.warning(
+                "Could not load standalone recognition model: %s. "
+                "Falling back to FaceAnalysis.get() for embedding.",
+                e,
+            )
+            return None
+
     # -- Public API ----------------------------------------------------------
 
     def identify_batch(
@@ -157,14 +197,29 @@ class FaceIdentityManager:
         return [self.identify(image) for image in face_images]
 
     def identify(self, face_image: np.ndarray) -> FaceIdentityResult:
-        """Identify an aligned RGB face image, creating a generated ID if needed."""
+        """
+        Identify an aligned RGB face image using three-zone routing.
+
+        Zones:
+          matched   (>= 0.55): Confident identity — proceed to attendance/silent pass
+          uncertain (0.30-0.55): Could be internal at bad angle — hold, wait
+          new_face  (< 0.30): Genuinely new person — tracker confirms before registering
+
+        NOTE: This no longer auto-registers new faces. The tracker calls
+        register_new_face() after 3-frame confirmation.
+        """
         embedding = self._compute_embedding(face_image)
         if embedding is None:
+            logger.info(
+                "IDENTIFY: embedding failed — face crop shape=%s",
+                face_image.shape if face_image is not None else None,
+            )
             return FaceIdentityResult(
                 person_id="Unknown",
                 confidence=0.0,
                 unknown=True,
                 above_threshold=False,
+                zone="unknown",
             )
 
         # Detect head pose for the incoming face
@@ -182,36 +237,109 @@ class FaceIdentityManager:
             except Exception as e:
                 logger.debug("Pose detection failed: %s", e)
 
+        # Get raw FAISS similarity regardless of threshold
+        raw_sim = self._get_raw_similarity(embedding)
+
+        # ── ZONE 1: CONFIDENT MATCH (>= 0.55) ─────────────────────
         match = self._find_best_match(embedding, incoming_pose=head_pose_result)
         if match is not None:
             known_face, best_similarity, confidence = match
-            if known_face.role != "internal":
-                self._add_or_update_embedding(
-                    known_face.person_id, embedding, best_similarity,
-                    pose_label=head_pose_result.pose_label.value if head_pose_result else None,
-                    pose_angles=pose_angles,
-                )
-            return FaceIdentityResult(
-                person_id=known_face.person_id,
-                confidence=confidence,
-                is_new=False,
-                display_name=known_face.display_name,
-                role=known_face.role,
-                head_pose=head_pose_result.pose_label if head_pose_result else None,
-                pose_angles=pose_angles,
-            )
 
-        person_id = self._create_person(
-            embedding,
-            pose_label=head_pose_result.pose_label.value if head_pose_result else None,
-            pose_angles=pose_angles,
+            if best_similarity >= CONFIDENT_MATCH_THRESHOLD:
+                # Definitely this person
+                logger.info(
+                    "IDENTIFY: ZONE1 MATCH  sim=%.3f  person=%s (%s) role=%s",
+                    best_similarity, known_face.person_id,
+                    known_face.display_name, known_face.role,
+                )
+                if known_face.role != "internal":
+                    self._add_or_update_embedding(
+                        known_face.person_id, embedding, best_similarity,
+                        pose_label=head_pose_result.pose_label.value if head_pose_result else None,
+                        pose_angles=pose_angles,
+                    )
+                return FaceIdentityResult(
+                    person_id=known_face.person_id,
+                    confidence=confidence,
+                    is_new=False,
+                    display_name=known_face.display_name,
+                    role=known_face.role,
+                    head_pose=head_pose_result.pose_label if head_pose_result else None,
+                    pose_angles=pose_angles,
+                    zone="matched",
+                    raw_similarity=best_similarity,
+                )
+            else:
+                # ── ZONE 2: UNCERTAINTY (0.30–0.55) ───────────────
+                # Could be internal at bad angle — do NOT register
+                logger.info(
+                    "IDENTIFY: ZONE2 UNCERTAIN  sim=%.3f  person=%s (%s)",
+                    best_similarity, known_face.person_id,
+                    known_face.display_name,
+                )
+                return FaceIdentityResult(
+                    person_id=known_face.person_id,
+                    confidence=confidence,
+                    is_new=False,
+                    above_threshold=False,
+                    display_name=known_face.display_name,
+                    role=known_face.role,
+                    head_pose=head_pose_result.pose_label if head_pose_result else None,
+                    pose_angles=pose_angles,
+                    zone="uncertain",
+                    raw_similarity=best_similarity,
+                )
+
+        # ── ZONE 3: GENUINELY NEW (< 0.30 across ALL enrollments) ─
+        # Do NOT auto-register here. Return zone="new_face" so the
+        # tracker can confirm over 3+ frames before registering.
+        logger.info(
+            "IDENTIFY: ZONE3 NEW_FACE  raw_sim=%.3f  (no match above %.2f)",
+            raw_sim, MATCH_SIMILARITY_THRESHOLD,
         )
+        return FaceIdentityResult(
+            person_id="unregistered",
+            confidence=0.0,
+            is_new=False,   # Not registered yet!
+            unknown=True,
+            above_threshold=False,
+            head_pose=head_pose_result.pose_label if head_pose_result else None,
+            pose_angles=pose_angles,
+            zone="new_face",
+            raw_similarity=raw_sim,
+        )
+
+    def register_new_face(
+        self,
+        face_image: np.ndarray,
+        temp_name: Optional[str] = None,
+    ) -> Optional[FaceIdentityResult]:
+        """
+        Register a confirmed new face (called by tracker after 3-frame confirmation).
+
+        Args:
+            face_image: Best quality aligned RGB face crop
+            temp_name: Optional temporary name (e.g. VISITOR_20260509_110540)
+
+        Returns:
+            FaceIdentityResult with is_new=True and the new person_id
+        """
+        embedding = self._compute_embedding(face_image)
+        if embedding is None:
+            return None
+
+        person_id = self._create_person(embedding)
+
+        # Update display name to temp name if provided
+        if temp_name:
+            self.db.update_person_display_name(person_id, temp_name)
+
         return FaceIdentityResult(
             person_id=person_id,
             confidence=1.0,
             is_new=True,
-            head_pose=head_pose_result.pose_label if head_pose_result else None,
-            pose_angles=pose_angles,
+            zone="matched",
+            raw_similarity=1.0,
         )
 
     def compute_signature(self, face_image: np.ndarray) -> Optional[str]:
@@ -253,12 +381,24 @@ class FaceIdentityManager:
         # FaceAnalysis expects BGR input
         face_bgr = cv2.cvtColor(face_rgb, cv2.COLOR_RGB2BGR)
 
+        embedding = None
         try:
-            faces = self._model.get(face_bgr)
-            if not faces:
-                logger.debug("FaceAnalysis did not detect a face in the crop")
-                return None
-            embedding = faces[0].embedding
+            if getattr(self, "_rec_model", None) is not None:
+                # Direct feature extraction (bypassing detection)
+                # Expects a 112x112 aligned BGR crop
+                # insightface get_feat can return either array or a Face object depending on the model version
+                feats = self._rec_model.get_feat(face_bgr)
+                if isinstance(feats, np.ndarray):
+                    embedding = feats
+                elif hasattr(feats, 'embedding'):
+                    embedding = feats.embedding
+            else:
+                # Fallback to FaceAnalysis (detect + embed)
+                faces = self._model.get(face_bgr)
+                if not faces:
+                    logger.debug("FaceAnalysis did not detect a face in the crop")
+                    return None
+                embedding = faces[0].embedding
         except Exception as e:
             logger.debug("ArcFace embedding failed: %s", e)
             return None
@@ -316,6 +456,31 @@ class FaceIdentityManager:
             "FAISS index rebuilt: %d vectors x %d dims",
             self._faiss_index.ntotal, EMBEDDING_DIM,
         )
+
+    # -- Raw similarity (for zone routing) ------------------------------------
+
+    def _get_raw_similarity(self, embedding: np.ndarray) -> float:
+        """
+        Return the raw cosine similarity of the best FAISS match.
+        No threshold gating — used by identify() to determine which zone
+        an unmatched face falls into.
+        """
+        self._ensure_index_current()
+
+        if not self._known or self._faiss_index is None or self._faiss_index.ntotal == 0:
+            return 0.0
+
+        query = embedding.astype(np.float32).reshape(1, -1)
+        try:
+            import faiss
+        except ImportError:
+            return 0.0
+        faiss.normalize_L2(query)
+
+        D, I = self._faiss_index.search(query, k=1)
+        if int(I[0][0]) == -1:
+            return 0.0
+        return float(D[0][0])
 
     # -- Matching ------------------------------------------------------------
 

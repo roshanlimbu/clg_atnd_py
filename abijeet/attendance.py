@@ -36,6 +36,9 @@ STATUS_UNKNOWN         = "unknown"         # Unknown face (red)
 STATUS_LOW_CONFIDENCE  = "low_confidence"  # Below threshold (gray)
 STATUS_INTERNAL        = "internal"        # Internal team member (blue, not counted)
 STATUS_NEW_FACE        = "new_face"        # Newly registered person (orange)
+STATUS_SILENT_PASS     = "silent_pass"     # Internal team — completely invisible
+STATUS_AUTO_REGISTERED = "auto_registered" # Just auto-registered as new visitor
+STATUS_UNCERTAIN       = "uncertain"       # In uncertainty buffer, waiting
 
 DEBOUNCE_MINUTES = 5
 

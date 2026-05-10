@@ -50,9 +50,9 @@ class DatabaseManager:
             str(self.db_path),
             timeout=10,
         )
-        conn.row_factory = sqlite3.Row   # Enables column name access
-        conn.execute("PRAGMA journal_mode=WAL;")   # Better concurrent reads
-        conn.execute("PRAGMA foreign_keys=ON;")    # Enforce FK constraints
+        conn.row_factory = sqlite3.Row  # Enables column name access
+        conn.execute("PRAGMA journal_mode=WAL;")  # Better concurrent reads
+        conn.execute("PRAGMA foreign_keys=ON;")  # Enforce FK constraints
         return conn
 
     def _verify_database(self):
@@ -67,9 +67,7 @@ class DatabaseManager:
             self._repair_partial_migration(conn)
             self._migrate_schema(conn)
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table';"
-            )
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
             tables = {row[0] for row in cursor.fetchall()}
             required = {"persons", "attendance"}
             missing = required - tables
@@ -171,9 +169,7 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_attendance_photos_person_date "
             "ON attendance_photos(person_id, date);"
         )
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_persons_role ON persons(role);"
-        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_persons_role ON persons(role);")
         conn.commit()
 
     def _ensure_person_metadata_columns(self, conn: sqlite3.Connection):
@@ -385,7 +381,10 @@ class DatabaseManager:
                     conn.commit()
                     logger.info(
                         "Attendance started: %s on %s at %s | confidence=%.2f%%",
-                        person_id, date_str, time_str, confidence * 100,
+                        person_id,
+                        date_str,
+                        time_str,
+                        confidence * 100,
                     )
                     return "inserted", 1
 
@@ -393,10 +392,13 @@ class DatabaseManager:
                     attendance_date,
                     datetime.strptime(existing["last_seen"], "%H:%M:%S").time(),
                 )
-                if attendance_time - last_counted_at < timedelta(minutes=debounce_minutes):
+                if attendance_time - last_counted_at < timedelta(
+                    minutes=debounce_minutes
+                ):
                     logger.debug(
                         "Debounced attendance count for %s on %s",
-                        person_id, date_str,
+                        person_id,
+                        date_str,
                     )
                     return "debounced", int(existing["count"])
 
@@ -411,7 +413,10 @@ class DatabaseManager:
                 conn.commit()
                 logger.info(
                     "Attendance count incremented: %s on %s at %s | count=%s",
-                    person_id, date_str, time_str, existing["count"] + 1,
+                    person_id,
+                    date_str,
+                    time_str,
+                    existing["count"] + 1,
                 )
                 return "incremented", int(existing["count"]) + 1
 
@@ -443,7 +448,7 @@ class DatabaseManager:
                     WHERE a.person_id=? AND a.date=? AND p.face_signature IS NOT NULL
                     LIMIT 1
                     """,
-                    (person_id, today_str)
+                    (person_id, today_str),
                 )
                 return cursor.fetchone() is not None
         except sqlite3.Error as e:
@@ -518,7 +523,7 @@ class DatabaseManager:
                       AND COALESCE(p.role, 'guest') != 'internal'
                     ORDER BY a.first_seen ASC
                     """,
-                    (today_str,)
+                    (today_str,),
                 )
                 return cursor.fetchall()
         except sqlite3.Error as e:
@@ -556,7 +561,7 @@ class DatabaseManager:
                       AND COALESCE(p.role, 'guest') != 'internal'
                     ORDER BY a.first_seen ASC
                     """,
-                    (query_date.isoformat(),)
+                    (query_date.isoformat(),),
                 )
                 return cursor.fetchall()
         except sqlite3.Error as e:
@@ -609,7 +614,7 @@ class DatabaseManager:
                     FROM persons
                     WHERE person_id=?
                     """,
-                    (person_id,)
+                    (person_id,),
                 )
                 return cursor.fetchone()
         except sqlite3.Error as e:
@@ -661,7 +666,13 @@ class DatabaseManager:
                         (person_id, face_signature, display_name, role, reference_photo_path)
                     VALUES (?, ?, ?, ?, ?)
                     """,
-                    (person_id, face_signature, display_name, role, reference_photo_path)
+                    (
+                        person_id,
+                        face_signature,
+                        display_name,
+                        role,
+                        reference_photo_path,
+                    ),
                 )
                 conn.commit()
                 logger.info(f"Person registered: {person_id}")
@@ -817,3 +828,298 @@ class DatabaseManager:
         except sqlite3.Error as e:
             logger.error(f"Error getting statistics: {e}")
             return {"total_persons": 0, "today_count": 0, "all_time_count": 0}
+
+    # ─────────────────────────────────────────────────────────────────────
+    # AUTO-REGISTRATION & DISPLAY NAME
+    # ─────────────────────────────────────────────────────────────────────
+
+    def update_person_display_name(self, person_id: str, display_name: str) -> bool:
+        """Update the display name for a registered person."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    "UPDATE persons SET display_name=? WHERE person_id=?",
+                    (display_name, person_id),
+                )
+                conn.commit()
+                return True
+        except sqlite3.Error as e:
+            logger.error(f"Error updating display name for {person_id}: {e}")
+            return False
+
+    def ensure_auto_registration_table(self) -> None:
+        """Create the auto_registered_visitors table if it doesn't exist."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS auto_registered_visitors (
+                        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                        person_id         TEXT NOT NULL UNIQUE,
+                        temp_name         TEXT,
+                        best_image_path   TEXT,
+                        registration_source TEXT DEFAULT 'auto',
+                        confirmed         INTEGER DEFAULT 0,
+                        real_name         TEXT,
+                        first_seen        TEXT NOT NULL,
+                        times_seen        INTEGER DEFAULT 1,
+                        registered_at     TEXT DEFAULT (DATETIME('now')),
+                        FOREIGN KEY (person_id) REFERENCES persons(person_id)
+                    );
+                    """
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_auto_reg_person "
+                    "ON auto_registered_visitors(person_id);"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_auto_reg_date "
+                    "ON auto_registered_visitors(registered_at);"
+                )
+                conn.commit()
+        except sqlite3.Error as e:
+            logger.error(f"Error creating auto_registered_visitors table: {e}")
+
+    def record_auto_registration(
+        self,
+        person_id: str,
+        temp_name: str,
+        best_image_path: Optional[str] = None,
+        times_seen: int = 1,
+    ) -> bool:
+        """
+        Record an auto-registered visitor in the tracking table.
+
+        Args:
+            person_id: The person_id assigned during auto-registration
+            temp_name: Temporary name (VISITOR_YYYYMMDD_HHMMSS format)
+            best_image_path: Path to the best quality face crop
+            times_seen: Number of frames this face was confirmed in
+        """
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO auto_registered_visitors
+                        (person_id, temp_name, best_image_path, first_seen, times_seen)
+                    VALUES (?, ?, ?, DATETIME('now'), ?)
+                    ON CONFLICT(person_id) DO UPDATE SET
+                        times_seen = times_seen + excluded.times_seen
+                    """,
+                    (person_id, temp_name, best_image_path, times_seen),
+                )
+                conn.commit()
+                logger.info(
+                    "Auto-registration recorded: %s (%s) seen %d frames",
+                    person_id,
+                    temp_name,
+                    times_seen,
+                )
+                return True
+        except sqlite3.Error as e:
+            logger.error(f"Error recording auto-registration for {person_id}: {e}")
+            return False
+
+    def get_auto_registered_today(self) -> List[sqlite3.Row]:
+        """Return all auto-registered visitors from today."""
+        today_str = date.today().isoformat()
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT arv.*, p.display_name, p.reference_photo_path
+                    FROM auto_registered_visitors AS arv
+                    JOIN persons AS p ON p.person_id = arv.person_id
+                    WHERE DATE(arv.registered_at) = ?
+                    ORDER BY arv.registered_at DESC
+                    """,
+                    (today_str,),
+                )
+                return cursor.fetchall()
+        except sqlite3.Error as e:
+            logger.error(f"Error fetching auto-registered visitors: {e}")
+            return []
+
+    def confirm_auto_registration(self, person_id: str, real_name: str) -> bool:
+        """Operator confirms an auto-registered visitor and assigns a real name."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    """
+                    UPDATE auto_registered_visitors
+                    SET confirmed = 1, real_name = ?
+                    WHERE person_id = ?
+                    """,
+                    (real_name, person_id),
+                )
+                conn.execute(
+                    "UPDATE persons SET display_name = ? WHERE person_id = ?",
+                    (real_name, person_id),
+                )
+                conn.commit()
+                logger.info(
+                    "Auto-registration confirmed: %s -> %s",
+                    person_id,
+                    real_name,
+                )
+                return True
+        except sqlite3.Error as e:
+            logger.error(f"Error confirming auto-registration for {person_id}: {e}")
+            return False
+
+    # ─────────────────────────────────────────────────────────────────────
+    # PENDING FACES (frontend registration flow)
+    # ─────────────────────────────────────────────────────────────────────
+
+    def ensure_pending_faces_table(self) -> None:
+        """Create the pending_faces table if it doesn't exist."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS pending_faces (
+                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                        image_path      TEXT NOT NULL,
+                        quality_score   REAL DEFAULT 0.0,
+                        best_similarity REAL DEFAULT 0.0,
+                        frames_seen     INTEGER DEFAULT 1,
+                        status          TEXT DEFAULT 'pending',
+                        person_id       TEXT,
+                        display_name    TEXT,
+                        created_at      TEXT DEFAULT (DATETIME('now')),
+                        resolved_at     TEXT
+                    );
+                    """
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_pending_status "
+                    "ON pending_faces(status);"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_pending_created "
+                    "ON pending_faces(created_at);"
+                )
+                conn.commit()
+        except sqlite3.Error as e:
+            logger.error(f"Error creating pending_faces table: {e}")
+
+    def record_pending_face(
+        self,
+        image_path: str,
+        quality_score: float = 0.0,
+        best_similarity: float = 0.0,
+        frames_seen: int = 1,
+    ) -> bool:
+        """
+        Record a new face crop awaiting frontend registration.
+
+        Args:
+            image_path: Relative path to the saved face crop
+            quality_score: Sharpness score from the tracker
+            best_similarity: Best FAISS match (should be < 0.30)
+            frames_seen: How many frames this face was confirmed in
+        """
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO pending_faces
+                        (image_path, quality_score, best_similarity, frames_seen)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        image_path,
+                        round(quality_score, 2),
+                        round(best_similarity, 4),
+                        frames_seen,
+                    ),
+                )
+                conn.commit()
+                logger.info(
+                    "Pending face recorded: %s (quality=%.1f, sim=%.3f)",
+                    image_path,
+                    quality_score,
+                    best_similarity,
+                )
+                return True
+        except sqlite3.Error as e:
+            logger.error(f"Error recording pending face: {e}")
+            return False
+
+    def get_pending_faces(self) -> List[sqlite3.Row]:
+        """Return all unresolved pending faces for frontend display."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT id, image_path, quality_score, best_similarity,
+                           frames_seen, status, created_at
+                    FROM pending_faces
+                    WHERE status = 'pending'
+                    ORDER BY created_at DESC
+                    """
+                )
+                return cursor.fetchall()
+        except sqlite3.Error as e:
+            logger.error(f"Error fetching pending faces: {e}")
+            return []
+
+    def resolve_pending_face(
+        self,
+        pending_id: int,
+        status: str,
+        person_id: Optional[str] = None,
+        display_name: Optional[str] = None,
+    ) -> bool:
+        """
+        Resolve a pending face — either 'registered' or 'dismissed'.
+
+        Args:
+            pending_id: The id from pending_faces table
+            status: 'registered' or 'dismissed'
+            person_id: The assigned person_id (only for 'registered')
+            display_name: The name given by operator (only for 'registered')
+        """
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    """
+                    UPDATE pending_faces
+                    SET status = ?, person_id = ?, display_name = ?,
+                        resolved_at = DATETIME('now')
+                    WHERE id = ?
+                    """,
+                    (status, person_id, display_name, pending_id),
+                )
+                conn.commit()
+                logger.info(
+                    "Pending face %d resolved: %s (person=%s, name=%s)",
+                    pending_id,
+                    status,
+                    person_id,
+                    display_name,
+                )
+                return True
+        except sqlite3.Error as e:
+            logger.error(f"Error resolving pending face {pending_id}: {e}")
+            return False
+
+    def update_person_reference_photo(self, person_id: str, photo_path: str) -> bool:
+        """Update the reference_photo_path for a person."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    """
+                    UPDATE persons
+                    SET reference_photo_path = ?
+                    WHERE person_id = ?
+                    """,
+                    (photo_path, person_id),
+                )
+                conn.commit()
+                return True
+        except sqlite3.Error as e:
+            logger.error(f"Error updating reference photo for {person_id}: {e}")
+            return False

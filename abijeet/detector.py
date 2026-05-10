@@ -686,8 +686,8 @@ class FaceDetector:
             status = result.get("status", "low_confidence") if result else "low_confidence"
             color = COLOR_MAP.get(status, (128, 128, 128))
 
-            # Draw bounding box — thicker for counted and new faces
-            thickness = 2 if status in ("marked", "new_face") else 1
+            # Draw bounding box — thicker for counted, new, and internal faces
+            thickness = 2 if status in ("marked", "new_face", "internal") else 1
             cv2.rectangle(annotated, (x1, y1), (x2, y2), color, thickness)
 
             # Build label text
@@ -701,7 +701,7 @@ class FaceDetector:
                 if status in ("unknown", "low_confidence"):
                     label = f"{status_label} ({conf:.0%})"
                 elif status == "internal":
-                    label = f"{display_name} | Not counted"
+                    label = f"{display_name} | Internal Team"
                 elif status == "new_face":
                     label = f"{person_id} | NEW #{count}"
                 else:
@@ -735,7 +735,7 @@ class FaceDetector:
         return annotated
 
     def release(self):
-        """Release MediaPipe resources."""
-        if self._mp_face_mesh:
-            self._mp_face_mesh.close()
-            logger.info("MediaPipe FaceMesh released")
+        """Release detector resources."""
+        if hasattr(self, '_landmark_detector') and self._landmark_detector is not None:
+            logger.info("InsightFace landmark detector released")
+        logger.info("Face detector released")
